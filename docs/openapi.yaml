@@ -47,27 +47,39 @@ paths:
           schema:
             type: integer
             default: 10
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 10
       responses:
         '200':
-          description: Recent action records.
+          description: Paginated recent action records.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ActionRecord'
+                $ref: '#/components/schemas/ActionHistoryResponse'
               examples:
-                history:
+                page1:
                   value:
-                    - action_id: act-1
-                      run_id: run-1
-                      action_type: submitted
-                      status: queued
-                      started_at: '2024-06-23T12:00:00Z'
-                      finished_at: null
-                      input_snapshot: {}
-                      output_snapshot: {}
-                      error: null
+                    page: 1
+                    page_size: 10
+                    total: 25
+                    items:
+                      - action_id: act-1
+                        run_id: run-1
+                        action_type: submitted
+                        status: queued
+                        started_at: '2024-06-23T12:00:00Z'
+                        finished_at: null
+                        input_snapshot: {}
+                        output_snapshot: {}
+                        error: null
   /v1/artifacts:
     get:
       operationId: listArtifacts
@@ -78,26 +90,38 @@ paths:
           in: query
           schema:
             type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 10
       responses:
         '200':
-          description: Artifacts filtered by run.
+          description: Paginated artifacts filtered by run.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ArtifactRef'
+                $ref: '#/components/schemas/ArtifactListResponse'
               examples:
-                artifacts:
+                page1:
                   value:
-                    - artifact_id: artifact-1
-                      run_id: run-1
-                      filename: report.json
-                      content_type: application/json
-                      size_bytes: 128
-                      created_at: '2024-06-23T12:01:00Z'
-                      absolute_path: /tmp/artifacts/report.json
-                      sha256: abc123
+                    page: 1
+                    page_size: 10
+                    total: 3
+                    items:
+                      - artifact_id: artifact-1
+                        run_id: run-1
+                        filename: report.json
+                        content_type: application/json
+                        size_bytes: 128
+                        created_at: '2024-06-23T12:01:00Z'
+                        absolute_path: /tmp/artifacts/report.json
+                        sha256: abc123
     post:
       operationId: registerArtifact
       security:
@@ -176,6 +200,42 @@ components:
         updated_at:
           type: number
           format: double
+    ActionHistoryResponse:
+      type: object
+      required:
+        - page
+        - page_size
+        - total
+        - items
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionRecord'
+    ArtifactListResponse:
+      type: object
+      required:
+        - page
+        - page_size
+        - total
+        - items
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactRef'
     ActionRecord:
       type: object
       properties:

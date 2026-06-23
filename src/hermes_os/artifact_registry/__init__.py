@@ -136,3 +136,12 @@ class ArtifactRegistry:
                 ]
             )
         )
+
+    def list_expired(self, older_than: str) -> List[StoredArtifact]:
+        return [artifact for artifact in self._artifacts.values() if artifact.created_at < older_than]
+
+    def expire_older_than(self, older_than: str) -> List[StoredArtifact]:
+        expired = self.list_expired(older_than)
+        for artifact in expired:
+            self.delete(artifact.artifact_id)
+        return expired

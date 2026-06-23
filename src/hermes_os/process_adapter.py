@@ -367,6 +367,19 @@ class ProcessAdapter:
             self._publish("cancelled", payload)
         return cancelled
 
+    def cancel_by_group(self, group_id: str) -> List[Dict[str, Any]]:
+        cancelled: List[Dict[str, Any]] = []
+        for item_id, entry in list(self._run_registry.items()):
+            if entry.get("group_id") != group_id:
+                continue
+            self.queue.cancel(item_id)
+            entry["status"] = "cancelled"
+            entry["status_updated_at"] = self._now().isoformat()
+            payload = {"workforce_item_id": item_id}
+            cancelled.append({**payload, "status": "cancelled"})
+            self._publish("cancelled", payload)
+        return cancelled
+
     def list_by_group(self, group_id: str) -> Dict[str, Any]:
         items = []
         for item_id, entry in self._run_registry.items():
