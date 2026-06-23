@@ -1,7 +1,4 @@
-"""Artifact Registry — disk-backed artifact storage bridge for Hermes OS.
-
-Contracts are defined in ``hermes_os.types.ArtifactRef``.
-"""
+"""Artifact Registry — disk-backed artifact storage bridge for Hermes OS."""
 
 from __future__ import annotations
 
@@ -73,6 +70,15 @@ class ArtifactRegistry:
     def list_for_run(self, run_id: str) -> list[StoredArtifact]:
         return [item for item in self._artifacts.values() if item.run_id == run_id]
 
+    def verify(self, artifact_id: str) -> bool:
+        stored = self._artifacts.get(artifact_id)
+        if stored is None:
+            return False
+        target = Path(stored.absolute_path)
+        if not target.exists():
+            return False
+        return hashlib.sha256(target.read_bytes()).hexdigest() == stored.sha256
+
     def delete(self, artifact_id: str) -> bool:
         stored = self._artifacts.pop(artifact_id, None)
         if stored is None:
@@ -80,7 +86,7 @@ class ArtifactRegistry:
         target = Path(stored.absolute_path)
         if target.exists():
             target.unlink()
-        meta = Path(str(target) + ".meta")
+        meta = self._index_path(stored.run_id, stored.filename)
         if meta.exists():
             meta.unlink()
         return True

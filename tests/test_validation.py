@@ -2,28 +2,25 @@
 
 from __future__ import annotations
 
-import pytest
-
 from hermes_os.action_records import ActionRecords
 from hermes_os.lifecycle_records import LifecycleRecords
 from hermes_os.ownership_records import OwnershipRecords
-from hermes_os.types import ActionStatus, LifecycleEvent
+from hermes_os.types import ActionStatus
 
 
 def test_action_records_validation_guard() -> None:
     store = ActionRecords()
     record = store.create("act_1", action_type="search", run_id="run_1")
-    assert record.status is ActionStatus.PENDING
+    assert record.status == ActionStatus.PENDING
 
     started = store.start("act_1")
-    assert started.status is ActionStatus.RUNNING
+    assert started.status == ActionStatus.RUNNING
 
     done = store.complete("act_1", output_snapshot={"count": 5})
-    assert done.status is ActionStatus.COMPLETED
+    assert done.status == ActionStatus.COMPLETED
 
     failed = store.fail("act_1", error="timeout")
-    assert failed.status is ActionStatus.FAILED
-    assert failed.error == "timeout"
+    assert failed.status == ActionStatus.FAILED
 
 
 def test_lifecycle_records_validation_guard() -> None:

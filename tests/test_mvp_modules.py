@@ -70,17 +70,17 @@ from hermes_os.action_records import ActionRecords
 def test_action_records_lifecycle() -> None:
     store = ActionRecords()
     record = store.create("act_1", action_type="search", run_id="run_1")
-    assert record.status is ActionStatus.PENDING
+    assert record.status == ActionStatus.PENDING
 
     started = store.start("act_1")
-    assert started.status is ActionStatus.RUNNING
+    assert started.status == ActionStatus.RUNNING
 
     done = store.complete("act_1", output_snapshot={"count": 5})
-    assert done.status is ActionStatus.COMPLETED
+    assert done.status == ActionStatus.COMPLETED
     assert done.output_snapshot == {"count": 5}
 
     failed = store.fail("act_1", error="timeout")
-    assert failed.status is ActionStatus.FAILED
+    assert failed.status == ActionStatus.FAILED
     assert failed.error == "timeout"
 
 
