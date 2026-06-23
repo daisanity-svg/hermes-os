@@ -38,3 +38,30 @@ def test_update_run_status_updates_items() -> None:
     result = adapter.update_run_status("run-1", "running")
     assert result["status"] == "running"
     assert adapter._run_registry["job"]["status"] == "running"
+
+
+def test_set_run_params_stores_params() -> None:
+    adapter = ProcessAdapter()
+    result = adapter.set_run_params("run-1", {"key": "value"})
+    assert result["deduplicated"] is False
+    assert result["params"]["key"] == "value"
+
+
+def test_set_run_params_deduplicates() -> None:
+    adapter = ProcessAdapter()
+    adapter.set_run_params("run-1", {"key": "value"})
+    result = adapter.set_run_params("run-1", {"key": "value"})
+    assert result["deduplicated"] is True
+
+
+def test_get_run_params_returns_stored_params() -> None:
+    adapter = ProcessAdapter()
+    adapter.set_run_params("run-1", {"key": "value"})
+    result = adapter.get_run_params("run-1")
+    assert result["params"]["key"] == "value"
+
+
+def test_get_run_params_returns_empty_for_unknown() -> None:
+    adapter = ProcessAdapter()
+    result = adapter.get_run_params("missing")
+    assert result["params"] == {}

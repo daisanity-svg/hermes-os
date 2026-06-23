@@ -114,6 +114,56 @@ paths:
                       - run_id: run-1
                         status: completed
                         updated_at: 1719000000.123
+  /v1/hermes-os/runs/{run_id}:
+    get:
+      operationId: getRunDetail
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run detail with items and metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunDetailResponse'
+              examples:
+                detail:
+                  value:
+                    run_id: run-1
+                    items: []
+                    metadata:
+                      item_count: 0
+                      statuses: {}
+  /v1/hermes-os/runs/{run_id}/params:
+    get:
+      operationId: getRunParams
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run params snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunParamsResponse'
+              examples:
+                params:
+                  value:
+                    run_id: run-1
+                    params:
+                      key: value
   /v1/artifacts:
     get:
       operationId: listArtifacts
@@ -560,3 +610,28 @@ components:
               type: boolean
             database_available:
               type: boolean
+    RunDetailResponse:
+      type: object
+      required:
+        - run_id
+        - items
+        - metadata
+      properties:
+        run_id:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+        metadata:
+          type: object
+    RunParamsResponse:
+      type: object
+      required:
+        - run_id
+        - params
+      properties:
+        run_id:
+          type: string
+        params:
+          type: object

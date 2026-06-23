@@ -10,6 +10,9 @@ from hermes_os.event_bus import DomainEvent, EventBus
 from hermes_os.operational_memory_log import OperationalMemoryLog
 from hermes_os.workforce_queue import WorkforceQueue
 from hermes_os.types import WorkforceItem
+from hermes_os.workflow_records import WorkflowRecords
+from hermes_os.approval_records import ApprovalRecords
+from hermes_os.run_params_records import RunParamsRecords
 
 
 class _ShutdownRequested(Exception):
@@ -34,6 +37,7 @@ class ProcessAdapter:
         on_complete: Optional[Callable[..., None]] = None,
         workflow_records: Optional["WorkflowRecords"] = None,
         approval_records: Optional["ApprovalRecords"] = None,
+        run_params_records: Optional["RunParamsRecords"] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -53,6 +57,8 @@ class ProcessAdapter:
         self.on_complete = on_complete
         self.workflow_records = workflow_records
         self.approval_records = approval_records
+        self.run_params_records = run_params_records
+        self._params_registry: Dict[str, Dict[str, Any]] = {}
         self._shutdown_requested = False
         self._draining = False
 
@@ -128,6 +134,7 @@ class ProcessAdapter:
             "finished_at": None,
             "sla_seconds": self.sla_seconds,
             "sla_exceeded": False,
+            "params": item.get("params"),
         }
         run_id = item.get("run_id")
         if run_id:
@@ -503,6 +510,43 @@ class ProcessAdapter:
         payload = {"run_id": run_id, "status": status}
         self._publish("run_updated", payload)
         return {**payload, "updated_at": run_meta["updated_at"]}
+
+    @staticmethod
+    def _params_fingerprint(params: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not params:
+            return None
+        try:
+            import hashlib
+            import json
+
+            normalized = json.dumps(params, sort_keys=True, separators=(",", ":"))
+            return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+        except Exception:
+            return None
+
+    def set_run_params(self, run_id: str, params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if params is None:
+            return None
+        fingerprint = self._params_fingerprint(params)
+        existing = self._params_registry.get(run_id)
+        if existing and existing.get("fingerprint") == fingerprint:
+            return {"run_id": run_id, "params": existing["params"], "deduplicated": True}
+        record = None
+        if self.run_params_records is not None:
+            record = self.run_params_records.set(run_id, params)
+        self._params_registry[run_id] = {"params": dict(params), "fingerprint": fingerprint}
+        return {
+            "run_id": run_id,
+            "params": dict(params),
+            "deduplicated": False,
+            "updated_at": record.updated_at if record else None,
+        }
+
+    def get_run_params(self, run_id: str) -> Dict[str, Any]:
+        record = self._params_registry.get(run_id)
+        if record is None:
+            return {"run_id": run_id, "params": {}}
+        return {"run_id": run_id, "params": record["params"]}
 
     def approve(self, item_id: str) -> Optional[Dict[str, Any]]:
         if self.approval_records is None:
