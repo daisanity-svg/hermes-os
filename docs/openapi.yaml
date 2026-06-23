@@ -12,10 +12,15 @@ servers:
   - url: https://api.hermes.example/v1
     description: Production preview endpoint.
 
+security:
+  - BearerAuth: []
+
 paths:
   /v1/status:
     get:
       operationId: getStatus
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: Current Hermes OS runtime status.
@@ -34,6 +39,8 @@ paths:
   /v1/actions/history:
     get:
       operationId: listActions
+      security:
+        - BearerAuth: []
       parameters:
         - name: limit
           in: query
@@ -64,6 +71,8 @@ paths:
   /v1/artifacts:
     get:
       operationId: listArtifacts
+      security:
+        - BearerAuth: []
       parameters:
         - name: run_id
           in: query
@@ -91,6 +100,8 @@ paths:
                       sha256: abc123
     post:
       operationId: registerArtifact
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -112,6 +123,11 @@ paths:
                 $ref: '#/components/schemas/ArtifactRef'
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Hermes OS API Key
   schemas:
     StatusResponse:
       type: object

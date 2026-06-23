@@ -30,6 +30,7 @@ class ProcessAdapter:
         drain_timeout_seconds: float = 1.0,
         execution_timeout_seconds: Optional[float] = None,
         retry_hook: Optional[Callable[..., None]] = None,
+        sla_seconds: Optional[float] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -44,6 +45,7 @@ class ProcessAdapter:
         self.drain_timeout_seconds = drain_timeout_seconds
         self.execution_timeout_seconds = execution_timeout_seconds
         self.retry_hook = retry_hook
+        self.sla_seconds = sla_seconds
         self._shutdown_requested = False
         self._draining = False
 
@@ -113,6 +115,8 @@ class ProcessAdapter:
             "failure_count": 0,
             "started_at": None,
             "finished_at": None,
+            "sla_seconds": self.sla_seconds,
+            "sla_exceeded": False,
         }
         entry = {"workforce_item_id": workforce_item.item_id, "group_id": item.get("group_id")}
         self._publish("submitted", entry)
@@ -122,6 +126,8 @@ class ProcessAdapter:
             "priority": workforce_item.priority,
             "retry_count": 0,
             "submitted_at": self._run_registry[workforce_item.item_id]["submitted_at"],
+            "sla_seconds": self.sla_seconds,
+            "sla_exceeded": False,
         }
 
     def batch_submit(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -155,6 +161,7 @@ class ProcessAdapter:
             entry.setdefault("started_at", now.isoformat())
             entry["status_updated_at"] = now.isoformat()
             self._publish("started", {"workforce_item_id": item.item_id})
+            self._check_sla(item.item_id)
             if self._expire_if_timed_out(item.item_id):
                 entry["status"] = "failed"
                 entry["finished_at"] = now.isoformat()
@@ -379,3 +386,15 @@ class ProcessAdapter:
                 }
             )
         return {"group_id": group_id, "items": items}
+
+    def _check_sla(self, item_id: str) -> None:
+        if self.sla_seconds is None:
+            return
+        entry = self._run_registry.get(item_id, {})
+        if not entry.get("started_at"):
+            return
+        started = datetime.fromisoformat(entry["started_at"])
+        if self._now() - started > timedelta(seconds=self.sla_seconds) and not entry.get("sla_exceeded"):
+            entry["sla_exceeded"] = True
+            entry["status_updated_at"] = self._now().isoformat()
+            self._publish("sla_exceeded", {"workforce_item_id": item_id})
