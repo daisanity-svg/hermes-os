@@ -1,0 +1,140 @@
+openapi: 3.0.3
+info:
+  title: Hermes OS API
+  version: 0.1.0
+  description: Minimal runtime surface for Hermes OS.
+
+paths:
+  /v1/status:
+    get:
+      operationId: getStatus
+      responses:
+        '200':
+          description: Current Hermes OS runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  /v1/actions/history:
+    get:
+      operationId: listActions
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Recent action records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActionRecord'
+  /v1/artifacts:
+    get:
+      operationId: listArtifacts
+      parameters:
+        - name: run_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Artifacts filtered by run.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ArtifactRef'
+    post:
+      operationId: registerArtifact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtifactRegisterRequest'
+      responses:
+        '201':
+          description: Artifact registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactRef'
+
+components:
+  schemas:
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        active_runs:
+          type: integer
+        queued_items:
+          type: integer
+        failed_items:
+          type: integer
+        updated_at:
+          type: number
+          format: double
+    ActionRecord:
+      type: object
+      properties:
+        action_id:
+          type: string
+        run_id:
+          type: string
+        action_type:
+          type: string
+        status:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        input_snapshot:
+          type: object
+        output_snapshot:
+          type: object
+        error:
+          type: string
+    ArtifactRef:
+      type: object
+      properties:
+        artifact_id:
+          type: string
+        run_id:
+          type: string
+        filename:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        absolute_path:
+          type: string
+        sha256:
+          type: string
+    ArtifactRegisterRequest:
+      type: object
+      required:
+        - run_id
+        - path
+      properties:
+        run_id:
+          type: string
+        path:
+          type: string
+        content_type:
+          type: string
+          default: application/octet-stream

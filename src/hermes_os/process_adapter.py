@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from hermes_os.event_bus import DomainEvent, EventBus
 from hermes_os.operational_memory_log import OperationalMemoryLog
@@ -16,6 +16,10 @@ class _ShutdownRequested(Exception):
     pass
 
 
+class _TimedOut(Exception):
+    pass
+
+
 class ProcessAdapter:
     def __init__(
         self,
@@ -24,6 +28,7 @@ class ProcessAdapter:
         circuit_failure_threshold: int = 5,
         circuit_recovery_seconds: float = 2.0,
         drain_timeout_seconds: float = 1.0,
+        execution_timeout_seconds: Optional[float] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -36,6 +41,7 @@ class ProcessAdapter:
         self.circuit_recovery_seconds = circuit_recovery_seconds
         self._circuit_until: Dict[str, datetime] = {}
         self.drain_timeout_seconds = drain_timeout_seconds
+        self.execution_timeout_seconds = execution_timeout_seconds
         self._shutdown_requested = False
         self._draining = False
 
@@ -79,24 +85,27 @@ class ProcessAdapter:
     def submit(self, item: Dict[str, Any]) -> Dict[str, Any]:
         if self._shutdown_requested:
             raise _ShutdownRequested()
+        created_at = self._now()
         workforce_item = WorkforceItem(
             item_id=item["id"],
             item_type=item.get("type", "task"),
             priority=int(item.get("priority", 0)),
             status="queued",
-            created_at=self._now(),
+            created_at=created_at,
             payload=item.get("payload", {}),
         )
         self.queue.enqueue(workforce_item)
         self._run_registry[workforce_item.item_id] = {
-            "submitted_at": self._now().isoformat(),
+            "submitted_at": created_at.isoformat(),
             "priority": workforce_item.priority,
             "retry_count": 0,
             "status": "queued",
-            "status_updated_at": self._now().isoformat(),
+            "status_updated_at": created_at.isoformat(),
             "output": {},
             "error": None,
             "failure_count": 0,
+            "started_at": None,
+            "finished_at": None,
         }
         entry = {"workforce_item_id": workforce_item.item_id}
         self._publish("submitted", entry)
@@ -111,21 +120,57 @@ class ProcessAdapter:
     def batch_submit(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [self.submit(item) for item in items]
 
+    def _expire_if_timed_out(self, item_id: str) -> bool:
+        if self.execution_timeout_seconds is None:
+            return False
+        entry = self._run_registry.get(item_id, {})
+        started_at = entry.get("started_at")
+        if not started_at:
+            return False
+        started = datetime.fromisoformat(started_at)
+        if self._now() - started > timedelta(seconds=self.execution_timeout_seconds):
+            self.record_failure(item_id, error="execution_timeout", retry=False)
+            return True
+        return False
+
     def drain(self, limit: int = 1) -> List[Dict[str, Any]]:
         drained: List[Dict[str, Any]] = []
+        selected: List[WorkforceItem] = []
         for _ in range(limit):
             item = self.queue.dequeue()
             if item is None:
                 break
-            entry = self._run_registry.get(item.item_id, {})
-            entry.setdefault("status", "completed")
-            entry["status_updated_at"] = self._now().isoformat()
+            selected.append(item)
+        now = self._now()
+        for item in selected:
+            entry = self._run_registry.setdefault(item.item_id, {})
+            entry["status"] = "running"
+            entry.setdefault("started_at", now.isoformat())
+            entry["status_updated_at"] = now.isoformat()
+            self._publish("started", {"workforce_item_id": item.item_id})
+            if self._expire_if_timed_out(item.item_id):
+                entry["status"] = "failed"
+                entry["finished_at"] = now.isoformat()
+                entry["status_updated_at"] = now.isoformat()
+                drained.append(
+                    {
+                        "id": item.item_id,
+                        "type": item.item_type,
+                        "priority": item.priority,
+                        "status": "failed",
+                        "payload": item.payload,
+                    }
+                )
+                continue
+            entry["status"] = "completed"
+            entry["finished_at"] = now.isoformat()
+            entry["status_updated_at"] = now.isoformat()
             drained.append(
                 {
                     "id": item.item_id,
                     "type": item.item_type,
                     "priority": item.priority,
-                    "status": entry.get("status"),
+                    "status": "completed",
                     "payload": item.payload,
                 }
             )
@@ -135,11 +180,12 @@ class ProcessAdapter:
         return drained
 
     def complete(self, item_id: str) -> Dict[str, Any]:
+        now = self._now()
         item = self.queue.complete(item_id)
         entry = self._run_registry.get(item_id, {})
         if item is None:
             entry["status"] = "not_found"
-            entry["status_updated_at"] = self._now().isoformat()
+            entry["status_updated_at"] = now.isoformat()
             entry["error"] = entry.get("error") or "not_found"
             return {
                 "workforce_item_id": item_id,
@@ -149,7 +195,8 @@ class ProcessAdapter:
                 "updated_at": entry.get("status_updated_at"),
             }
         entry["status"] = "completed"
-        entry["status_updated_at"] = self._now().isoformat()
+        entry["finished_at"] = now.isoformat()
+        entry["status_updated_at"] = now.isoformat()
         entry.pop("circuit_open", None)
         payload = {"workforce_item_id": item.item_id}
         self._publish("completed", payload)
