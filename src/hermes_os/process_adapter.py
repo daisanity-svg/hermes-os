@@ -33,6 +33,7 @@ class ProcessAdapter:
         sla_seconds: Optional[float] = None,
         on_complete: Optional[Callable[..., None]] = None,
         workflow_records: Optional["WorkflowRecords"] = None,
+        approval_records: Optional["ApprovalRecords"] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -50,6 +51,7 @@ class ProcessAdapter:
         self.sla_seconds = sla_seconds
         self.on_complete = on_complete
         self.workflow_records = workflow_records
+        self.approval_records = approval_records
         self._shutdown_requested = False
         self._draining = False
 
@@ -113,6 +115,7 @@ class ProcessAdapter:
             "group_id": item.get("group_id"),
             "workflow_id": item.get("workflow_id"),
             "step_id": item.get("step_id"),
+            "approval_status": item.get("approval_status"),
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
@@ -429,6 +432,32 @@ class ProcessAdapter:
                 }
             )
         return workflows
+
+    def approve(self, item_id: str) -> Optional[Dict[str, Any]]:
+        if self.approval_records is None:
+            return None
+        record = self.approval_records.approve(item_id)
+        if record is None:
+            return None
+        entry = self._run_registry.setdefault(item_id, {})
+        entry["approval_status"] = "approved"
+        entry["status_updated_at"] = self._now().isoformat()
+        payload = {"workforce_item_id": item_id, "approval_status": "approved"}
+        self._publish("approved", payload)
+        return {**payload, "updated_at": entry["status_updated_at"]}
+
+    def reject(self, item_id: str) -> Optional[Dict[str, Any]]:
+        if self.approval_records is None:
+            return None
+        record = self.approval_records.reject(item_id)
+        if record is None:
+            return None
+        entry = self._run_registry.setdefault(item_id, {})
+        entry["approval_status"] = "rejected"
+        entry["status_updated_at"] = self._now().isoformat()
+        payload = {"workforce_item_id": item_id, "approval_status": "rejected"}
+        self._publish("rejected", payload)
+        return {**payload, "updated_at": entry["status_updated_at"]}
 
     def _check_sla(self, item_id: str) -> None:
         if self.sla_seconds is None:
