@@ -42,6 +42,7 @@ class ProcessAdapter:
         self.max_retries = max_retries
         self.base_backoff_seconds = base_backoff_seconds
         self._run_registry: Dict[str, Dict[str, Any]] = {}
+        self._run_metadata: Dict[str, Dict[str, Any]] = {}
         self.circuit_failure_threshold = circuit_failure_threshold
         self.circuit_recovery_seconds = circuit_recovery_seconds
         self._circuit_until: Dict[str, datetime] = {}
@@ -128,6 +129,20 @@ class ProcessAdapter:
             "sla_seconds": self.sla_seconds,
             "sla_exceeded": False,
         }
+        run_id = item.get("run_id")
+        if run_id:
+            run_meta = self._run_metadata.setdefault(
+                run_id,
+                {
+                    "run_id": run_id,
+                    "created_at": created_at.isoformat(),
+                    "updated_at": created_at.isoformat(),
+                    "item_count": 0,
+                    "statuses": {},
+                },
+            )
+            run_meta["item_count"] += 1
+            run_meta["updated_at"] = created_at.isoformat()
         entry = {"workforce_item_id": workforce_item.item_id, "group_id": item.get("group_id")}
         self._publish("submitted", entry)
         return {
@@ -434,18 +449,22 @@ class ProcessAdapter:
             )
         return workflows
 
-    def list_for_run(self, run_id: Optional[str]) -> List[Dict[str, Any]]:
+    def list_for_run(self, run_id: Optional[str]) -> Dict[str, Any]:
         if not run_id:
-            return []
+            return {"run_id": run_id, "items": [], "metadata": {}}
         items = []
+        statuses: Dict[str, int] = {}
         for item_id, entry in self._run_registry.items():
             if entry.get("run_id") != run_id:
                 continue
             item = self.queue.get(item_id)
+            status = entry.get("status")
+            if status:
+                statuses[status] = statuses.get(status, 0) + 1
             items.append(
                 {
                     "workforce_item_id": item_id,
-                    "status": entry.get("status"),
+                    "status": status,
                     "priority": entry.get("priority"),
                     "run_id": entry.get("run_id"),
                     "item": {
@@ -458,7 +477,32 @@ class ProcessAdapter:
                     else None,
                 }
             )
-        return items
+        run_meta = self._run_metadata.get(run_id, {})
+        return {
+            "run_id": run_id,
+            "items": items,
+            "metadata": {
+                "item_count": run_meta.get("item_count", len(items)),
+                "statuses": statuses,
+                "created_at": run_meta.get("created_at"),
+                "updated_at": run_meta.get("updated_at"),
+            },
+        }
+
+    def update_run_status(self, run_id: str, status: str) -> Optional[Dict[str, Any]]:
+        run_meta = self._run_metadata.get(run_id)
+        if run_meta is None:
+            return None
+        run_meta["status"] = status
+        run_meta["updated_at"] = self._now().isoformat()
+        for item_id, entry in self._run_registry.items():
+            if entry.get("run_id") != run_id:
+                continue
+            entry["status"] = status
+            entry["status_updated_at"] = run_meta["updated_at"]
+        payload = {"run_id": run_id, "status": status}
+        self._publish("run_updated", payload)
+        return {**payload, "updated_at": run_meta["updated_at"]}
 
     def approve(self, item_id: str) -> Optional[Dict[str, Any]]:
         if self.approval_records is None:

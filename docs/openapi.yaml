@@ -293,6 +293,26 @@ paths:
           description: Item not found.
         '503':
           description: Approval records not configured.
+  /v1/hermes-os/health:
+    get:
+      operationId: getHermesOsHealth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Hermes OS runtime health.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                ok:
+                  value:
+                    status: ok
+                    components:
+                      adapter_connected: true
+                      queue_available: true
+                      database_available: true
 
 components:
   securitySchemes:
@@ -523,3 +543,20 @@ components:
           enum:
             - approve
             - reject
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - components
+      properties:
+        status:
+          type: string
+        components:
+          type: object
+          properties:
+            adapter_connected:
+              type: boolean
+            queue_available:
+              type: boolean
+            database_available:
+              type: boolean
