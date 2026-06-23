@@ -34,6 +34,9 @@ class ProcessAdapter:
         )
         return {"workforce_item_id": workforce_item.item_id, "status": "queued"}
 
+    def batch_submit(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [self.submit(item) for item in items]
+
     def drain(self, limit: int = 1) -> List[Dict[str, Any]]:
         drained: List[Dict[str, Any]] = []
         for _ in range(limit):
@@ -56,3 +59,15 @@ class ProcessAdapter:
                 metadata={"drained_count": len(drained)},
             )
         return drained
+
+    def complete(self, item_id: str) -> Dict[str, Any]:
+        item = self.queue.complete(item_id)
+        if item is None:
+            return {"workforce_item_id": item_id, "status": "not_found"}
+        self.memory.append(
+            source="adapter",
+            category="completion",
+            content=f"completed {item.item_id}",
+            metadata={"workforce_item_id": item.item_id},
+        )
+        return {"workforce_item_id": item.item_id, "status": "completed"}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -16,18 +17,22 @@ class WorkforceQueue:
     # ------------------------------------------------------------------
     # mutation
     # ------------------------------------------------------------------
-    def enqueue(self, item: WorkforceItem) -> WorkforceItem:
+    def enqueue(self, item: WorkforceItem, ttl_seconds: Optional[int] = None) -> WorkforceItem:
         if item.item_id in self._items:
             raise ValueError(f"duplicate workforce item id: {item.item_id}")
+        if ttl_seconds is not None:
+            item.payload["_ttl_expires_at"] = time.time() + ttl_seconds
         self._items[item.item_id] = item
         self._insert_sorted(item)
         return item
 
     def dequeue(self) -> Optional[WorkforceItem]:
+        self._expire()
         while self._queue:
             candidate = self._queue.pop(0)
-            self._items.pop(candidate.item_id, None)
-            return candidate
+            if candidate.item_id in self._items:
+                self._items.pop(candidate.item_id, None)
+                return candidate
         return None
 
     def complete(self, item_id: str) -> Optional[WorkforceItem]:
@@ -62,16 +67,21 @@ class WorkforceQueue:
             payload=item.payload,
         )
 
+    def expire(self, item_id: str) -> Optional[WorkforceItem]:
+        return self.cancel(item_id)
+
     # ------------------------------------------------------------------
     # queries
     # ------------------------------------------------------------------
     def pending(self) -> List[WorkforceItem]:
+        self._expire()
         return [item for item in self._queue if item.item_id in self._items]
 
     def get(self, item_id: str) -> Optional[WorkforceItem]:
         return self._items.get(item_id)
 
     def peek(self) -> Optional[WorkforceItem]:
+        self._expire()
         for candidate in self._queue:
             if candidate.item_id in self._items:
                 return candidate
@@ -83,6 +93,17 @@ class WorkforceQueue:
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
+    def _expire(self) -> None:
+        now = time.time()
+        expired = [
+            item_id
+            for item_id, item in list(self._items.items())
+            if item.payload.get("_ttl_expires_at") is not None
+            and float(item.payload.get("_ttl_expires_at")) <= now
+        ]
+        for item_id in expired:
+            self.cancel(item_id)
+
     def _insert_sorted(self, item: WorkforceItem) -> None:
         key = (-item.priority, item.created_at, item.item_id)
         lo, hi = 0, len(self._queue)
