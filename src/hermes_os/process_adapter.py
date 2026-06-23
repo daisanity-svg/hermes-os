@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from hermes_os.event_bus import DomainEvent, EventBus
 from hermes_os.operational_memory_log import OperationalMemoryLog
@@ -29,6 +29,7 @@ class ProcessAdapter:
         circuit_recovery_seconds: float = 2.0,
         drain_timeout_seconds: float = 1.0,
         execution_timeout_seconds: Optional[float] = None,
+        retry_hook: Optional[Callable[..., None]] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -42,6 +43,7 @@ class ProcessAdapter:
         self._circuit_until: Dict[str, datetime] = {}
         self.drain_timeout_seconds = drain_timeout_seconds
         self.execution_timeout_seconds = execution_timeout_seconds
+        self.retry_hook = retry_hook
         self._shutdown_requested = False
         self._draining = False
 
@@ -102,6 +104,7 @@ class ProcessAdapter:
             "submitted_at": created_at.isoformat(),
             "priority": workforce_item.priority,
             "parent_id": parent_id,
+            "group_id": item.get("group_id"),
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
@@ -111,7 +114,7 @@ class ProcessAdapter:
             "started_at": None,
             "finished_at": None,
         }
-        entry = {"workforce_item_id": workforce_item.item_id}
+        entry = {"workforce_item_id": workforce_item.item_id, "group_id": item.get("group_id")}
         self._publish("submitted", entry)
         return {
             **entry,
@@ -275,6 +278,8 @@ class ProcessAdapter:
                 "backoff_seconds": backoff,
                 "updated_at": entry.get("status_updated_at"),
             }
+            if self.retry_hook is not None:
+                self.retry_hook(self, item_id, entry, retry_count=retry_count, backoff_seconds=backoff)
             self._publish("retry", payload)
             return {**payload, "status": "retry"}
         entry["status"] = "failed"
@@ -350,3 +355,27 @@ class ProcessAdapter:
             cancelled.append({**payload, "status": "cancelled"})
             self._publish("cancelled", payload)
         return cancelled
+
+    def list_by_group(self, group_id: str) -> Dict[str, Any]:
+        items = []
+        for item_id, entry in self._run_registry.items():
+            if entry.get("group_id") != group_id:
+                continue
+            item = self.queue.get(item_id)
+            items.append(
+                {
+                    "workforce_item_id": item_id,
+                    "status": entry.get("status"),
+                    "priority": entry.get("priority"),
+                    "group_id": entry.get("group_id"),
+                    "item": {
+                        "item_id": item.item_id if item else item_id,
+                        "item_type": item.item_type if item else None,
+                        "priority": item.priority if item else None,
+                        "status": item.status if item else None,
+                    }
+                    if item
+                    else None,
+                }
+            )
+        return {"group_id": group_id, "items": items}

@@ -4,6 +4,14 @@ info:
   version: 0.1.0
   description: Minimal runtime surface for Hermes OS.
 
+servers:
+  - url: /v1
+    description: Default Hermes OS API root.
+  - url: http://localhost:8000/v1
+    description: Local development fallback.
+  - url: https://api.hermes.example/v1
+    description: Production preview endpoint.
+
 paths:
   /v1/status:
     get:
