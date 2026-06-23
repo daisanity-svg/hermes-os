@@ -70,6 +70,22 @@ class WorkforceQueue:
     def expire(self, item_id: str) -> Optional[WorkforceItem]:
         return self.cancel(item_id)
 
+    def set_priority(self, item_id: str, priority: int) -> Optional[WorkforceItem]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        updated = WorkforceItem(
+            item_id=item.item_id,
+            item_type=item.item_type,
+            priority=int(priority),
+            status=item.status,
+            created_at=item.created_at,
+            payload=item.payload,
+        )
+        self.cancel(item_id)
+        self.enqueue(updated)
+        return updated
+
     # ------------------------------------------------------------------
     # queries
     # ------------------------------------------------------------------
