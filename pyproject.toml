@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-os"
+version = "0.1.0"
+description = "Hermes OS — next-generation Agent Organization Runtime (v0.1 MVP)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pydantic>=2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pydantic>=2"]
+validation = ["pydantic>=2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermes_os"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
