@@ -9,11 +9,11 @@ from typing import Any, Dict, List, Optional
 from hermes_os.event_bus import DomainEvent, EventBus
 from hermes_os.operational_memory_log import OperationalMemoryLog
 from hermes_os.workforce_queue import WorkforceQueue
-from hermes_os.types import WorkforceItem
+from hermes_os.types import WorkforceItem, TaskStatus
 
 
 class ProcessAdapter:
-    def __init__(self, max_retries: int = 3, base_backoff_seconds: float = 0.5) -> None:
+    def __init__(self, max_retries: int = 3, base_backoff_seconds: float = 0.5, circuit_failure_threshold: int = 5, circuit_recovery_seconds: float = 2.0) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
         self.events = EventBus()
@@ -21,26 +21,30 @@ class ProcessAdapter:
         self.max_retries = max_retries
         self.base_backoff_seconds = base_backoff_seconds
         self._run_registry: Dict[str, Dict[str, Any]] = {}
+        self.circuit_failure_threshold = circuit_failure_threshold
+        self.circuit_recovery_seconds = circuit_recovery_seconds
+        self._circuit_failures: Dict[str, int] = {}
+        self._circuit_until: Dict[str, datetime] = {}
 
     def _now(self) -> datetime:
         return datetime.utcnow()
 
     def _publish(self, name: str, entry: Dict[str, Any]) -> None:
-        self.events.publish(
-            DomainEvent(
-                name=name,
-                source="adapter",
-                occurred_at=self._now(),
-                payload=entry,
-            )
+        event = DomainEvent(name=name, source="adapter", occurred_at=self._now(), payload=entry)
+        self.memory.append(
+            source="adapter",
+            category="event",
+            content=f"{name} {entry.get('workforce_item_id', '')}".strip(),
+            metadata={"event_name": name, "payload": entry},
         )
+        self.events.publish(event)
 
     def submit(self, item: Dict[str, Any]) -> Dict[str, Any]:
         workforce_item = WorkforceItem(
             item_id=item["id"],
             item_type=item.get("type", "task"),
             priority=int(item.get("priority", 0)),
-            status="pending",
+            status=TaskStatus.QUEUED,
             created_at=self._now(),
             payload=item.get("payload", {}),
         )
@@ -53,16 +57,9 @@ class ProcessAdapter:
             "status_updated_at": self._now().isoformat(),
             "output": {},
             "error": None,
+            "failure_count": 0,
         }
-        entry = {
-            "workforce_item_id": workforce_item.item_id,
-        }
-        self.memory.append(
-            source="adapter",
-            category="submission",
-            content=f"submitted {workforce_item.item_id}",
-            metadata=entry,
-        )
+        entry = {"workforce_item_id": workforce_item.item_id}
         self._publish("submitted", entry)
         return {
             **entry,
@@ -89,17 +86,12 @@ class ProcessAdapter:
                     "id": item.item_id,
                     "type": item.item_type,
                     "priority": item.priority,
+                    "status": entry.get("status"),
                     "payload": item.payload,
                 }
             )
         if drained:
             payload = {"drained_count": len(drained)}
-            self.memory.append(
-                source="adapter",
-                category="process",
-                content=f"drained {len(drained)} workforce items",
-                metadata=payload,
-            )
             self._publish("drained", payload)
         return drained
 
@@ -119,13 +111,8 @@ class ProcessAdapter:
             }
         entry["status"] = "completed"
         entry["status_updated_at"] = self._now().isoformat()
+        entry.pop("circuit_open", None)
         payload = {"workforce_item_id": item.item_id}
-        self.memory.append(
-            source="adapter",
-            category="completion",
-            content=f"completed {item.item_id}",
-            metadata=payload,
-        )
         self._publish("completed", payload)
         return {
             "workforce_item_id": item.item_id,
@@ -160,16 +147,19 @@ class ProcessAdapter:
             "updated_at": entry["status_updated_at"],
         }
         self._publish("priority_updated", payload)
-        return {
-            **payload,
-            "status": "requeued",
-        }
+        return {**payload, "status": "requeued"}
 
     def record_failure(self, item_id: str, error: Optional[str] = None, retry: bool = False) -> Dict[str, Any]:
-        entry = self._run_registry.get(item_id, {})
+        entry = self._run_registry.setdefault(item_id, {})
         retry_count = int(entry.get("retry_count", 0))
+        failure_count = int(entry.get("failure_count", 0)) + 1
+        entry["failure_count"] = failure_count
         entry["error"] = error
         entry["last_error"] = error
+        if failure_count >= self.circuit_failure_threshold:
+            entry["circuit_open"] = True
+            entry["circuit_open_until"] = (self._now() + timedelta(seconds=self.circuit_recovery_seconds)).isoformat()
+            self._circuit_until[item_id] = self._now() + timedelta(seconds=self.circuit_recovery_seconds)
         if retry and retry_count < self.max_retries:
             retry_count += 1
             entry["retry_count"] = retry_count
@@ -181,7 +171,7 @@ class ProcessAdapter:
                     item_id=item.item_id,
                     item_type=item.item_type,
                     priority=item.priority,
-                    status="retry",
+                    status=TaskStatus.RETRY,
                     created_at=item.created_at,
                     payload={**item.payload, "retry_count": retry_count, "backoff_seconds": backoff},
                 )
@@ -212,6 +202,13 @@ class ProcessAdapter:
         entry = self._run_registry.get(item_id)
         if not entry:
             return None
+        if entry.get("circuit_open") and self._now() < self._circuit_until.get(item_id, self._now()):
+            return {
+                "workforce_item_id": item_id,
+                "status": "circuit_open",
+                "retry_count": entry.get("retry_count", 0),
+                "updated_at": entry.get("status_updated_at"),
+            }
         retry_count = int(entry.get("retry_count", 0)) + 1
         entry["retry_count"] = retry_count
         backoff = math.pow(2, retry_count) * self.base_backoff_seconds
@@ -222,13 +219,15 @@ class ProcessAdapter:
             item_id=item.item_id,
             item_type=item.item_type,
             priority=item.priority,
-            status="queued",
+            status=TaskStatus.QUEUED,
             created_at=item.created_at,
             payload={**item.payload, "retry_count": retry_count, "backoff_seconds": backoff},
         )
         self.queue.cancel(item_id)
         self.queue.enqueue(updated)
         entry["status"] = "queued"
+        entry["circuit_open"] = False
+        entry.pop("circuit_open_until", None)
         entry["status_updated_at"] = self._now().isoformat()
         entry["backoff_seconds"] = backoff
         payload = {
