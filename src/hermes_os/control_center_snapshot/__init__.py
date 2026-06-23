@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from hermes_os.types import ControlCenterSnapshot
+
+
+@dataclass
+class SnapshotDiff:
+    before: ControlCenterSnapshot
+    after: ControlCenterSnapshot
+
+    @property
+    def delta(self) -> Dict[str, int]:
+        return {
+            "active_runs": self.after.active_runs - self.before.active_runs,
+            "queued_items": self.after.queued_items - self.before.queued_items,
+            "failed_items": self.after.failed_items - self.before.failed_items,
+        }
 
 
 class ControlCenterSnapshotStore:
@@ -42,8 +57,17 @@ class ControlCenterSnapshotStore:
     def get(self, snapshot_id: str) -> Optional[ControlCenterSnapshot]:
         return self._history.get(snapshot_id)
 
-    def history(self) -> list[ControlCenterSnapshot]:
-        return list(self._history.values())
+    def history(self, limit: Optional[int] = None) -> list[ControlCenterSnapshot]:
+        snapshots = list(self._history.values())
+        if limit is not None:
+            return snapshots[-limit:]
+        return snapshots
+
+    def diff_since(self, snapshot_id: str) -> Optional[SnapshotDiff]:
+        before = self._history.get(snapshot_id)
+        if before is None or self._latest is None:
+            return None
+        return SnapshotDiff(before=before, after=self._latest)
 
 
 class RuntimeStateAdapter:
