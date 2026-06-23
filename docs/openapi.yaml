@@ -15,6 +15,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatusResponse'
+              examples:
+                ok:
+                  value:
+                    status: ok
+                    active_runs: 1
+                    queued_items: 2
+                    failed_items: 0
+                    updated_at: 1719000000.123
   /v1/actions/history:
     get:
       operationId: listActions
@@ -33,6 +41,18 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ActionRecord'
+              examples:
+                history:
+                  value:
+                    - action_id: act-1
+                      run_id: run-1
+                      action_type: submitted
+                      status: queued
+                      started_at: '2024-06-23T12:00:00Z'
+                      finished_at: null
+                      input_snapshot: {}
+                      output_snapshot: {}
+                      error: null
   /v1/artifacts:
     get:
       operationId: listArtifacts
@@ -50,6 +70,17 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ArtifactRef'
+              examples:
+                artifacts:
+                  value:
+                    - artifact_id: artifact-1
+                      run_id: run-1
+                      filename: report.json
+                      content_type: application/json
+                      size_bytes: 128
+                      created_at: '2024-06-23T12:01:00Z'
+                      absolute_path: /tmp/artifacts/report.json
+                      sha256: abc123
     post:
       operationId: registerArtifact
       requestBody:
@@ -58,6 +89,12 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ArtifactRegisterRequest'
+            examples:
+              default:
+                value:
+                  run_id: run-1
+                  path: /tmp/artifacts/report.json
+                  content_type: application/json
       responses:
         '201':
           description: Artifact registered.

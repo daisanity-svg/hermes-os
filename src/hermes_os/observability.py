@@ -29,3 +29,12 @@ class ObservabilityLog:
 
     def entries(self) -> List[StructuredLogEntry]:
         return list(self._entries)
+
+    def dashboard_snapshot(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "status": "ok",
+            "sample_count": len(self._entries),
+            "updated_at": self._entries[-1].timestamp if self._entries else time.time(),
+            "last_event": self._entries[-1].event if self._entries else None,
+        }
+        return payload

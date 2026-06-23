@@ -86,10 +86,13 @@ class ProcessAdapter:
         if self._shutdown_requested:
             raise _ShutdownRequested()
         created_at = self._now()
+        parent_id = item.get("parent_id")
+        parent_entry = self._run_registry.get(parent_id) if parent_id else None
+        priority = int(item.get("priority", parent_entry["priority"])) if parent_entry else int(item.get("priority", 0))
         workforce_item = WorkforceItem(
             item_id=item["id"],
             item_type=item.get("type", "task"),
-            priority=int(item.get("priority", 0)),
+            priority=priority,
             status="queued",
             created_at=created_at,
             payload=item.get("payload", {}),
@@ -98,6 +101,7 @@ class ProcessAdapter:
         self._run_registry[workforce_item.item_id] = {
             "submitted_at": created_at.isoformat(),
             "priority": workforce_item.priority,
+            "parent_id": parent_id,
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
