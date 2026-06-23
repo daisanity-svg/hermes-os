@@ -404,3 +404,33 @@ components:
           type: string
         expires_in:
           type: integer
+    StepRecord:
+      type: object
+      properties:
+        step_id:
+          type: string
+        workflow_id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: number
+          format: double
+        updated_at:
+          type: number
+          format: double
+    WorkflowRecord:
+      type: object
+      properties:
+        workflow_id:
+          type: string
+        root_item_id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: number
+          format: double
+        updated_at:
+          type: number
+          format: double

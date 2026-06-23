@@ -112,6 +112,7 @@ class ProcessAdapter:
             "parent_id": parent_id,
             "group_id": item.get("group_id"),
             "workflow_id": item.get("workflow_id"),
+            "step_id": item.get("step_id"),
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
