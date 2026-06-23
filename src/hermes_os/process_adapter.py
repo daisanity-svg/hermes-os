@@ -31,6 +31,7 @@ class ProcessAdapter:
         execution_timeout_seconds: Optional[float] = None,
         retry_hook: Optional[Callable[..., None]] = None,
         sla_seconds: Optional[float] = None,
+        on_complete: Optional[Callable[..., None]] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -46,6 +47,7 @@ class ProcessAdapter:
         self.execution_timeout_seconds = execution_timeout_seconds
         self.retry_hook = retry_hook
         self.sla_seconds = sla_seconds
+        self.on_complete = on_complete
         self._shutdown_requested = False
         self._draining = False
 
@@ -213,6 +215,8 @@ class ProcessAdapter:
         entry["status_updated_at"] = now.isoformat()
         entry.pop("circuit_open", None)
         payload = {"workforce_item_id": item.item_id}
+        if self.on_complete is not None:
+            self.on_complete(self, item.item_id, entry)
         self._publish("completed", payload)
         return {
             "workforce_item_id": item.item_id,

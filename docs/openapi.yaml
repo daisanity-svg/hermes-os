@@ -121,6 +121,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArtifactRef'
+  /v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+            examples:
+              default:
+                value:
+                  refresh_token: abc123
+      responses:
+        '200':
+          description: New access token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+              examples:
+                ok:
+                  value:
+                    access_token: xyz789
+                    token_type: bearer
+                    expires_in: 3600
+        '401':
+          description: Refresh token invalid.
 
 components:
   securitySchemes:
@@ -128,6 +157,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Hermes OS API Key
+    RefreshToken:
+      type: apiKey
+      in: header
+      name: X-Refresh-Token
   schemas:
     StatusResponse:
       type: object
@@ -199,3 +232,23 @@ components:
         content_type:
           type: string
           default: application/octet-stream
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+    RefreshResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        expires_in:
+          type: integer

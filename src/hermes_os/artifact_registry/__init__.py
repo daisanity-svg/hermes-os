@@ -19,6 +19,7 @@ class StoredArtifact:
     sha256: str
     created_at: str
     absolute_path: str
+    signature: Optional[str] = None
     metadata: dict = field(default_factory=dict)
 
 
@@ -44,6 +45,7 @@ class ArtifactRegistry:
         filename: str,
         content: bytes,
         content_type: str = "application/octet-stream",
+        signature: Optional[str] = None,
     ) -> StoredArtifact:
         run_dir = self._run_dir(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -59,6 +61,7 @@ class ArtifactRegistry:
             sha256=hashlib.sha256(content).hexdigest(),
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             absolute_path=str(target),
+            signature=signature,
         )
         self._artifacts[artifact_id] = stored
         self._save_index(stored)
@@ -100,7 +103,10 @@ class ArtifactRegistry:
             for line in meta.read_text().splitlines():
                 if not line.strip():
                     continue
-                artifact_id, filename, content_type, size_bytes, sha256, created_at, absolute_path = line.split("\t")
+                parts = line.split("\t")
+                if len(parts) < 7:
+                    continue
+                artifact_id, filename, content_type, size_bytes, sha256, created_at, absolute_path = parts[:7]
                 self._artifacts[artifact_id] = StoredArtifact(
                     artifact_id=artifact_id,
                     run_id=run_id,
@@ -110,6 +116,7 @@ class ArtifactRegistry:
                     sha256=sha256,
                     created_at=created_at,
                     absolute_path=absolute_path,
+                    signature=parts[7] if len(parts) > 7 else None,
                 )
 
     def _save_index(self, stored: StoredArtifact) -> None:
@@ -125,6 +132,7 @@ class ArtifactRegistry:
                     stored.sha256,
                     stored.created_at,
                     stored.absolute_path,
+                    stored.signature or "",
                 ]
             )
         )
