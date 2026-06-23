@@ -29,9 +29,11 @@ class APTask:
 
 
 def to_ap_task(workforce_item: Dict[str, Any]) -> APTask:
+    raw_priority = int(workforce_item.get("priority", 0))
     return APTask(
-        task_id=workforce_item["id"],
-        task_type=workforce_item.get("type", "task"),
-        priority=int(workforce_item.get("priority", 0)),
-        payload=workforce_item.get("payload", {}),
+        task_id=str(workforce_item["id"]),
+        task_type=str(workforce_item.get("type", "task")),
+        priority=max(0, raw_priority),
+        payload=dict(workforce_item.get("payload", {}) or {}),
+        metadata=dict(workforce_item.get("metadata", {}) or {}),
     )
