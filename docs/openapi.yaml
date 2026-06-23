@@ -41,6 +41,7 @@ paths:
       operationId: listActions
       security:
         - BearerAuth: []
+      deprecated: true
       parameters:
         - name: limit
           in: query
@@ -80,6 +81,39 @@ paths:
                         input_snapshot: {}
                         output_snapshot: {}
                         error: null
+  /v1/runs/history:
+    get:
+      operationId: listRuns
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Paginated run history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunHistoryResponse'
+              examples:
+                page1:
+                  value:
+                    page: 1
+                    page_size: 10
+                    total: 5
+                    items:
+                      - run_id: run-1
+                        status: completed
+                        updated_at: 1719000000.123
   /v1/artifacts:
     get:
       operationId: listArtifacts
@@ -149,6 +183,36 @@ paths:
     post:
       operationId: refreshToken
       security: []
+      deprecated: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+            examples:
+              default:
+                value:
+                  refresh_token: abc123
+      responses:
+        '200':
+          description: New access token issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+              examples:
+                ok:
+                  value:
+                    access_token: xyz789
+                    token_type: bearer
+                    expires_in: 3600
+        '401':
+          description: Refresh token invalid.
+  /v1/auth/token/refresh:
+    post:
+      operationId: refreshTokenV2
+      security: []
       requestBody:
         required: true
         content:
@@ -197,6 +261,34 @@ components:
           type: integer
         failed_items:
           type: integer
+        updated_at:
+          type: number
+          format: double
+    RunHistoryResponse:
+      type: object
+      required:
+        - page
+        - page_size
+        - total
+        - items
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunRecord'
+    RunRecord:
+      type: object
+      properties:
+        run_id:
+          type: string
+        status:
+          type: string
         updated_at:
           type: number
           format: double

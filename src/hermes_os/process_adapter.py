@@ -32,6 +32,7 @@ class ProcessAdapter:
         retry_hook: Optional[Callable[..., None]] = None,
         sla_seconds: Optional[float] = None,
         on_complete: Optional[Callable[..., None]] = None,
+        workflow_records: Optional["WorkflowRecords"] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -48,6 +49,7 @@ class ProcessAdapter:
         self.retry_hook = retry_hook
         self.sla_seconds = sla_seconds
         self.on_complete = on_complete
+        self.workflow_records = workflow_records
         self._shutdown_requested = False
         self._draining = False
 
@@ -109,6 +111,7 @@ class ProcessAdapter:
             "priority": workforce_item.priority,
             "parent_id": parent_id,
             "group_id": item.get("group_id"),
+            "workflow_id": item.get("workflow_id"),
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
@@ -403,6 +406,28 @@ class ProcessAdapter:
                 }
             )
         return {"group_id": group_id, "items": items}
+
+    def list_workflows(self) -> List[Dict[str, Any]]:
+        if self.workflow_records is None:
+            return []
+        workflows = []
+        for workflow_id, entry in self._run_registry.items():
+            workflow_id_value = entry.get("workflow_id")
+            if not workflow_id_value:
+                continue
+            record = self.workflow_records.get(workflow_id_value)
+            if record is None:
+                continue
+            workflows.append(
+                {
+                    "workflow_id": record.workflow_id,
+                    "root_item_id": record.root_item_id,
+                    "status": record.status,
+                    "created_at": record.created_at,
+                    "updated_at": record.updated_at,
+                }
+            )
+        return workflows
 
     def _check_sla(self, item_id: str) -> None:
         if self.sla_seconds is None:
