@@ -238,6 +238,61 @@ paths:
                     expires_in: 3600
         '401':
           description: Refresh token invalid.
+  /v1/hermes-os/approvals:
+    get:
+      operationId: listApprovals
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Pending approval items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalListResponse'
+              examples:
+                pending:
+                  value:
+                    items:
+                      - item_id: job-1
+                        status: pending
+                        created_at: 1719000000.111
+                        updated_at: 1719000000.111
+                        metadata: {}
+  /v1/hermes-os/approvals/{item_id}/resolve:
+    post:
+      operationId: resolveApproval
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalResolveRequest'
+            examples:
+              approve:
+                value:
+                  action: approve
+      responses:
+        '200':
+          description: Approval resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRecord'
+        '400':
+          description: Invalid action.
+        '404':
+          description: Item not found.
+        '503':
+          description: Approval records not configured.
 
 components:
   securitySchemes:
@@ -434,3 +489,37 @@ components:
         updated_at:
           type: number
           format: double
+    ApprovalListResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalRecord'
+    ApprovalRecord:
+      type: object
+      properties:
+        item_id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: number
+          format: double
+        updated_at:
+          type: number
+          format: double
+        metadata:
+          type: object
+    ApprovalResolveRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum:
+            - approve
+            - reject

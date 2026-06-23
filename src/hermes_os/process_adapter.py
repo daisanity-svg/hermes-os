@@ -116,6 +116,7 @@ class ProcessAdapter:
             "workflow_id": item.get("workflow_id"),
             "step_id": item.get("step_id"),
             "approval_status": item.get("approval_status"),
+            "run_id": item.get("run_id"),
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
@@ -432,6 +433,32 @@ class ProcessAdapter:
                 }
             )
         return workflows
+
+    def list_for_run(self, run_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not run_id:
+            return []
+        items = []
+        for item_id, entry in self._run_registry.items():
+            if entry.get("run_id") != run_id:
+                continue
+            item = self.queue.get(item_id)
+            items.append(
+                {
+                    "workforce_item_id": item_id,
+                    "status": entry.get("status"),
+                    "priority": entry.get("priority"),
+                    "run_id": entry.get("run_id"),
+                    "item": {
+                        "item_id": item.item_id if item else item_id,
+                        "item_type": item.item_type if item else None,
+                        "priority": item.priority if item else None,
+                        "status": item.status if item else None,
+                    }
+                    if item
+                    else None,
+                }
+            )
+        return items
 
     def approve(self, item_id: str) -> Optional[Dict[str, Any]]:
         if self.approval_records is None:
