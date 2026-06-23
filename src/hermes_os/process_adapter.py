@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from hermes_os.event_bus import DomainEvent, EventBus
 from hermes_os.operational_memory_log import OperationalMemoryLog
 from hermes_os.workforce_queue import WorkforceQueue
 from hermes_os.types import WorkforceItem
@@ -15,6 +16,7 @@ class ProcessAdapter:
     def __init__(self, max_retries: int = 3, base_backoff_seconds: float = 0.5) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
+        self.events = EventBus()
         self._context: Dict[str, Any] = {}
         self.max_retries = max_retries
         self.base_backoff_seconds = base_backoff_seconds
@@ -22,6 +24,16 @@ class ProcessAdapter:
 
     def _now(self) -> datetime:
         return datetime.utcnow()
+
+    def _publish(self, name: str, entry: Dict[str, Any]) -> None:
+        self.events.publish(
+            DomainEvent(
+                name=name,
+                source="adapter",
+                occurred_at=self._now(),
+                payload=entry,
+            )
+        )
 
     def submit(self, item: Dict[str, Any]) -> Dict[str, Any]:
         workforce_item = WorkforceItem(
@@ -42,14 +54,18 @@ class ProcessAdapter:
             "output": {},
             "error": None,
         }
+        entry = {
+            "workforce_item_id": workforce_item.item_id,
+        }
         self.memory.append(
             source="adapter",
             category="submission",
             content=f"submitted {workforce_item.item_id}",
-            metadata={"workforce_item_id": workforce_item.item_id},
+            metadata=entry,
         )
+        self._publish("submitted", entry)
         return {
-            "workforce_item_id": workforce_item.item_id,
+            **entry,
             "status": "queued",
             "priority": workforce_item.priority,
             "retry_count": 0,
@@ -77,12 +93,14 @@ class ProcessAdapter:
                 }
             )
         if drained:
+            payload = {"drained_count": len(drained)}
             self.memory.append(
                 source="adapter",
                 category="process",
                 content=f"drained {len(drained)} workforce items",
-                metadata={"drained_count": len(drained)},
+                metadata=payload,
             )
+            self._publish("drained", payload)
         return drained
 
     def complete(self, item_id: str) -> Dict[str, Any]:
@@ -101,12 +119,14 @@ class ProcessAdapter:
             }
         entry["status"] = "completed"
         entry["status_updated_at"] = self._now().isoformat()
+        payload = {"workforce_item_id": item.item_id}
         self.memory.append(
             source="adapter",
             category="completion",
             content=f"completed {item.item_id}",
-            metadata={"workforce_item_id": item.item_id},
+            metadata=payload,
         )
+        self._publish("completed", payload)
         return {
             "workforce_item_id": item.item_id,
             "status": "completed",
@@ -134,11 +154,15 @@ class ProcessAdapter:
         )
         self.queue.cancel(item_id)
         self.queue.enqueue(updated)
-        return {
+        payload = {
             "workforce_item_id": item_id,
-            "status": "requeued",
             "priority": entry["priority"],
             "updated_at": entry["status_updated_at"],
+        }
+        self._publish("priority_updated", payload)
+        return {
+            **payload,
+            "status": "requeued",
         }
 
     def record_failure(self, item_id: str, error: Optional[str] = None, retry: bool = False) -> Dict[str, Any]:
@@ -165,22 +189,24 @@ class ProcessAdapter:
                 self.queue.enqueue(updated)
             entry["backoff_seconds"] = backoff
             entry["status_updated_at"] = self._now().isoformat()
-            return {
+            payload = {
                 "workforce_item_id": item_id,
-                "status": "retry",
                 "retry_count": retry_count,
                 "backoff_seconds": backoff,
                 "updated_at": entry.get("status_updated_at"),
             }
+            self._publish("retry", payload)
+            return {**payload, "status": "retry"}
         entry["status"] = "failed"
         entry["status_updated_at"] = self._now().isoformat()
-        return {
+        payload = {
             "workforce_item_id": item_id,
-            "status": "failed",
             "retry_count": retry_count,
             "error": error,
             "updated_at": entry.get("status_updated_at"),
         }
+        self._publish("failed", payload)
+        return {**payload, "status": "failed"}
 
     def retry(self, item_id: str) -> Optional[Dict[str, Any]]:
         entry = self._run_registry.get(item_id)
@@ -205,10 +231,33 @@ class ProcessAdapter:
         entry["status"] = "queued"
         entry["status_updated_at"] = self._now().isoformat()
         entry["backoff_seconds"] = backoff
-        return {
+        payload = {
             "workforce_item_id": item_id,
-            "status": "queued",
             "retry_count": retry_count,
             "backoff_seconds": backoff,
             "updated_at": entry.get("status_updated_at"),
         }
+        self._publish("retried", payload)
+        return {**payload, "status": "queued"}
+
+    def cancel_by_filter(self, max_age_seconds: Optional[int] = None, max_priority: Optional[int] = None) -> List[Dict[str, Any]]:
+        cancelled: List[Dict[str, Any]] = []
+        candidates = list(self._run_registry.items())
+        submitted_since = self._now() - timedelta(seconds=max_age_seconds) if max_age_seconds is not None else None
+        for item_id, entry in candidates:
+            item = self.queue.get(item_id)
+            if item is None:
+                continue
+            if submitted_since is not None:
+                submitted_at = datetime.fromisoformat(entry.get("submitted_at", self._now().isoformat()))
+                if submitted_at > submitted_since:
+                    continue
+            if max_priority is not None and item.priority > max_priority:
+                continue
+            self.queue.cancel(item_id)
+            entry["status"] = "cancelled"
+            entry["status_updated_at"] = self._now().isoformat()
+            payload = {"workforce_item_id": item_id}
+            cancelled.append({**payload, "status": "cancelled"})
+            self._publish("cancelled", payload)
+        return cancelled

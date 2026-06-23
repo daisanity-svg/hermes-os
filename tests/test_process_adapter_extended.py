@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import time
+from datetime import datetime, timedelta
 
 from hermes_os.operational_memory_log import OperationalMemoryLog
 from hermes_os.process_adapter import ProcessAdapter
@@ -27,3 +29,12 @@ def test_backoff_increases_on_retry() -> None:
     previous = adapter.queue.get(updated["workforce_item_id"])
     backoff = previous.payload.get("backoff_seconds")
     assert isinstance(backoff, (int, float))
+
+
+def test_cancel_by_filter_removes_matching_items() -> None:
+    adapter = ProcessAdapter()
+    adapter.submit({"id": "low-1", "type": "task", "priority": 1, "payload": {}})
+    adapter.submit({"id": "high-1", "type": "task", "priority": 10, "payload": {}})
+    cancelled = adapter.cancel_by_filter(max_priority=5)
+    assert any(item["workforce_item_id"] == "low-1" for item in cancelled)
+    assert not any(item["workforce_item_id"] == "high-1" for item in cancelled)

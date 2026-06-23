@@ -1,0 +1,16 @@
+"""Event bus tests."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from hermes_os.event_bus import DomainEvent, EventBus
+
+
+def test_subscribe_and_publish() -> None:
+    bus = EventBus()
+    received: list[DomainEvent] = []
+    bus.subscribe("task.created", lambda event: received.append(event))
+    bus.publish(DomainEvent(name="task.created", source="adapter", occurred_at=datetime.utcnow(), payload={"task_id": "task-1"}))
+    assert len(received) == 1
+    assert received[0].payload["task_id"] == "task-1"
