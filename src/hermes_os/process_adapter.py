@@ -4,16 +4,27 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_os.event_bus import DomainEvent, EventBus
 from hermes_os.operational_memory_log import OperationalMemoryLog
 from hermes_os.workforce_queue import WorkforceQueue
-from hermes_os.types import WorkforceItem, TaskStatus
+from hermes_os.types import WorkforceItem
+
+
+class _ShutdownRequested(Exception):
+    pass
 
 
 class ProcessAdapter:
-    def __init__(self, max_retries: int = 3, base_backoff_seconds: float = 0.5, circuit_failure_threshold: int = 5, circuit_recovery_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        max_retries: int = 3,
+        base_backoff_seconds: float = 0.5,
+        circuit_failure_threshold: int = 5,
+        circuit_recovery_seconds: float = 2.0,
+        drain_timeout_seconds: float = 1.0,
+    ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
         self.events = EventBus()
@@ -23,13 +34,17 @@ class ProcessAdapter:
         self._run_registry: Dict[str, Dict[str, Any]] = {}
         self.circuit_failure_threshold = circuit_failure_threshold
         self.circuit_recovery_seconds = circuit_recovery_seconds
-        self._circuit_failures: Dict[str, int] = {}
         self._circuit_until: Dict[str, datetime] = {}
+        self.drain_timeout_seconds = drain_timeout_seconds
+        self._shutdown_requested = False
+        self._draining = False
 
     def _now(self) -> datetime:
         return datetime.utcnow()
 
     def _publish(self, name: str, entry: Dict[str, Any]) -> None:
+        if self._shutdown_requested and not self._draining:
+            raise _ShutdownRequested()
         event = DomainEvent(name=name, source="adapter", occurred_at=self._now(), payload=entry)
         self.memory.append(
             source="adapter",
@@ -39,12 +54,36 @@ class ProcessAdapter:
         )
         self.events.publish(event)
 
+    def request_shutdown(self) -> None:
+        self._shutdown_requested = True
+
+    def shutdown(self) -> Dict[str, Any]:
+        self.request_shutdown()
+        self._draining = True
+        deadline = self._now() + timedelta(seconds=self.drain_timeout_seconds)
+        drained: List[Dict[str, Any]] = []
+        try:
+            while self._now() < deadline:
+                batch = self.drain(limit=max(1, len(self.queue)))
+                if not batch:
+                    break
+                drained.extend(batch)
+        finally:
+            self._draining = False
+        return {
+            "status": "shutdown",
+            "drained_count": len(drained),
+            "deadline_reached": self._now() >= deadline,
+        }
+
     def submit(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        if self._shutdown_requested:
+            raise _ShutdownRequested()
         workforce_item = WorkforceItem(
             item_id=item["id"],
             item_type=item.get("type", "task"),
             priority=int(item.get("priority", 0)),
-            status=TaskStatus.QUEUED,
+            status="queued",
             created_at=self._now(),
             payload=item.get("payload", {}),
         )
@@ -171,7 +210,7 @@ class ProcessAdapter:
                     item_id=item.item_id,
                     item_type=item.item_type,
                     priority=item.priority,
-                    status=TaskStatus.RETRY,
+                    status="retry",
                     created_at=item.created_at,
                     payload={**item.payload, "retry_count": retry_count, "backoff_seconds": backoff},
                 )
@@ -219,7 +258,7 @@ class ProcessAdapter:
             item_id=item.item_id,
             item_type=item.item_type,
             priority=item.priority,
-            status=TaskStatus.QUEUED,
+            status="queued",
             created_at=item.created_at,
             payload={**item.payload, "retry_count": retry_count, "backoff_seconds": backoff},
         )
