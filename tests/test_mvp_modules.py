@@ -15,7 +15,6 @@ from hermes_os.types import (
     OwnershipRecord,
     WorkforceItem,
 )
-
 # ---- artifact_registry ----
 from hermes_os.artifact_registry import ArtifactRegistry
 
@@ -26,7 +25,7 @@ def test_artifact_registry_round_trip(tmp_path: Path) -> None:
     registry.register("run_1", "summary.txt", b"hello world")
     items = registry.list_for_run("run_1")
     assert {i.filename for i in items} == {"report.pdf", "summary.txt"}
-    assert registry.get("run_1::report.pdf").content_type == "application/octet-stream"
+    assert registry.get("run_1::report.pdf").content_type == "application/pdf"
     assert registry.get("run_1::report.pdf").size_bytes == 8
     assert registry.get("run_1::summary.txt").size_bytes == 11
     assert registry.delete("run_1::report.pdf") is True

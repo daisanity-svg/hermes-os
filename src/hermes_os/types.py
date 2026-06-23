@@ -41,6 +41,8 @@ class ArtifactRef:
     content_type: str = "application/octet-stream"
     size_bytes: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
+    absolute_path: Optional[str] = None
+    sha256: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -49,11 +51,11 @@ class OwnershipRecord:
     """Ownership attribution for an artifact or run."""
 
     record_id: str
-    subject_id: str  # e.g. run_id, artifact_id
+    subject_id: str
     owner: str
     source: str
     granted_at: datetime = field(default_factory=datetime.utcnow)
-    provenance: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

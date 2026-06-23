@@ -7,109 +7,118 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-from hermes_os.types import ArtifactRef
+
+@dataclass
+class StoredArtifact:
+    artifact_id: str
+    run_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    created_at: str
+    absolute_path: str
+    metadata: dict = field(default_factory=dict)
 
 
 class ArtifactRegistry:
-    """MVP storage bridge: artifacts are persisted under ``~/.hermes/artifacts/{run_id}/``.
-
-    Design choices:
-    - Canonical filename = filesystem filename under the run_dir.
-    - File identity is ``{run_id}::{filename}`` — mirrors the API Server's
-      delivery-system ``file_id`` convention so the runtime contract stays
-      consistent across cores.
-    - Empty / duplicate-safe writes are idempotent by design.
-    """
-
     def __init__(self, artifacts_root: Optional[str] = None) -> None:
-        self.artifacts_root = Path(
-            artifacts_root or "~/artifacts"
-        ).expanduser()
+        self.root = Path(artifacts_root or Path.home() / ".hermes" / "artifacts")
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._artifacts: dict[str, StoredArtifact] = {}
+        self._load_index()
 
     def _run_dir(self, run_id: str) -> Path:
-        return self.artifacts_root / run_id
+        return self.root / "runs" / run_id
 
-    def _next_artifact_id(self, run_id: str, filename: str) -> str:
-        raw = f"{run_id}::{filename}:{time.time_ns()}"
-        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    def _artifact_id(self, run_id: str, filename: str) -> str:
+        return f"{run_id}::{filename}"
+
+    def _index_path(self, run_id: str, filename: str) -> Path:
+        return self._run_dir(run_id) / f".{filename}.meta"
 
     def register(
         self,
         run_id: str,
         filename: str,
-        content_bytes: bytes,
+        content: bytes,
         content_type: str = "application/octet-stream",
-    ) -> ArtifactRef:
-        safe_name = Path(filename).name
-        if not safe_name:
-            raise ValueError("filename must not be empty")
-
+    ) -> StoredArtifact:
         run_dir = self._run_dir(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
-        target = run_dir / safe_name
-        target.write_bytes(content_bytes)
-
-        artifact_id = f"{run_id}::{safe_name}"
-        artifact = ArtifactRef(
-            artifact_id=artifact_id,
-            run_id=run_id,
-            filename=safe_name,
-            content_type=content_type,
-            size_bytes=len(content_bytes),
-            metadata={
-                "path": str(target),
-                "sha1": hashlib.sha1(content_bytes).hexdigest(),
-            },
-        )
-        return artifact
-
-    def get(self, artifact_id: str) -> Optional[ArtifactRef]:
-        try:
-            run_id, filename = artifact_id.split("::", 1)
-        except ValueError:
-            return None
-        target = self._run_dir(run_id) / filename
-        if not target.exists() or not target.is_file():
-            return None
-        content = target.read_bytes()
-        return ArtifactRef(
+        target = run_dir / filename
+        target.write_bytes(content)
+        artifact_id = self._artifact_id(run_id, filename)
+        stored = StoredArtifact(
             artifact_id=artifact_id,
             run_id=run_id,
             filename=filename,
-            content_type="application/octet-stream",
-            size_bytes=len(content),
-            metadata={"path": str(target)},
+            content_type=content_type,
+            size_bytes=target.stat().st_size,
+            sha256=hashlib.sha256(content).hexdigest(),
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            absolute_path=str(target),
         )
+        self._artifacts[artifact_id] = stored
+        self._save_index(stored)
+        return stored
 
-    def list_for_run(self, run_id: str) -> List[ArtifactRef]:
-        run_dir = self._run_dir(run_id)
-        if not run_dir.exists():
-            return []
-        entries: List[ArtifactRef] = []
-        for path in sorted(run_dir.iterdir()):
-            if path.is_file():
-                content = path.read_bytes()
-                entries.append(
-                    ArtifactRef(
-                        artifact_id=f"{run_id}::{path.name}",
-                        run_id=run_id,
-                        filename=path.name,
-                        size_bytes=len(content),
-                        metadata={"path": str(path)},
-                    )
-                )
-        return entries
+    def get(self, artifact_id: str) -> Optional[StoredArtifact]:
+        return self._artifacts.get(artifact_id)
+
+    def list_for_run(self, run_id: str) -> list[StoredArtifact]:
+        return [item for item in self._artifacts.values() if item.run_id == run_id]
 
     def delete(self, artifact_id: str) -> bool:
-        try:
-            run_id, filename = artifact_id.split("::", 1)
-        except ValueError:
+        stored = self._artifacts.pop(artifact_id, None)
+        if stored is None:
             return False
-        target = self._run_dir(run_id) / filename
+        target = Path(stored.absolute_path)
         if target.exists():
             target.unlink()
-            return True
-        return False
+        meta = Path(str(target) + ".meta")
+        if meta.exists():
+            meta.unlink()
+        return True
+
+    def _load_index(self) -> None:
+        if not self.root.exists():
+            return
+        for meta in self.root.glob("runs/*/.*.meta"):
+            run_dir = meta.parent
+            run_id = run_dir.name
+            for line in meta.read_text().splitlines():
+                if not line.strip():
+                    continue
+                artifact_id, filename, content_type, size_bytes, sha256, created_at, absolute_path = line.split("\t")
+                self._artifacts[artifact_id] = StoredArtifact(
+                    artifact_id=artifact_id,
+                    run_id=run_id,
+                    filename=filename,
+                    content_type=content_type,
+                    size_bytes=int(size_bytes),
+                    sha256=sha256,
+                    created_at=created_at,
+                    absolute_path=absolute_path,
+                )
+
+    def _save_index(self, stored: StoredArtifact) -> None:
+        meta = self._index_path(stored.run_id, stored.filename)
+        meta.parent.mkdir(parents=True, exist_ok=True)
+        meta.write_text(
+            "\t".join(
+                [
+                    stored.artifact_id,
+                    stored.filename,
+                    stored.content_type,
+                    str(stored.size_bytes),
+                    stored.sha256,
+                    stored.created_at,
+                    stored.absolute_path,
+                ]
+            )
+        )

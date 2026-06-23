@@ -1,41 +1,37 @@
-"""Ownership Records — pydantic-validated ownership attribution."""
+"""Ownership Records — ownership attribution and provenance."""
 
 from __future__ import annotations
 
 from typing import List, Optional
 
 from hermes_os.types import OwnershipRecord
-from hermes_os.validation import OwnershipRecordModel
 
 
 class OwnershipRecords:
-    """Validated ownership ledger backed by pydantic models."""
-
     def __init__(self) -> None:
-        self._records: dict[str, OwnershipRecordModel] = {}
-        self._seq = 0
+        self._records: dict[str, OwnershipRecord] = {}
 
     def grant(
         self,
         subject_id: str,
         owner: str,
-        source: str,
-        provenance: Optional[dict] = None,
-    ) -> OwnershipRecordModel:
-        self._seq += 1
-        record = OwnershipRecordModel(
-            record_id=f"own_{self._seq}",
+        source: str = "manual",
+        metadata: Optional[dict] = None,
+    ) -> OwnershipRecord:
+        record = OwnershipRecord(
+            record_id=f"own::{subject_id}::{owner}",
             subject_id=subject_id,
             owner=owner,
             source=source,
-            provenance=provenance or {},
+            metadata=metadata or {},
         )
-        self._records[record.record_id] = record
+        self._records[subject_id] = record
         return record
 
-    def get_for_subject(self, subject_id: str) -> List[OwnershipRecordModel]:
-        return [r for r in self._records.values() if r.subject_id == subject_id]
-
     def current_owner(self, subject_id: str) -> Optional[str]:
-        candidates = self.get_for_subject(subject_id)
-        return candidates[-1].owner if candidates else None
+        record = self._records.get(subject_id)
+        return None if record is None else record.owner
+
+    def get_for_subject(self, subject_id: str) -> List[OwnershipRecord]:
+        record = self._records.get(subject_id)
+        return [] if record is None else [record]
