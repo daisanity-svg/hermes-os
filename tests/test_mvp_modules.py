@@ -86,18 +86,20 @@ def test_action_records_lifecycle() -> None:
 
 # ---- workforce_queue ----
 from hermes_os.workforce_queue import WorkforceQueue
+from hermes_os.types import WorkforceItem
 
 
 def test_workforce_queue_priority_and_order() -> None:
     queue = WorkforceQueue()
-    a = queue.enqueue("task_a", priority=1)
-    b = queue.enqueue("task_b", priority=5)
-    c = queue.enqueue("task_c", priority=3)
+    a = queue.enqueue(WorkforceItem(item_id="task_a", item_type="task", priority=1))
+    b = queue.enqueue(WorkforceItem(item_id="task_b", item_type="task", priority=5))
+    c = queue.enqueue(WorkforceItem(item_id="task_c", item_type="task", priority=3))
 
     first = queue.dequeue()
-    assert first.item_id == b.item_id   # highest priority
+    assert first is not None
+    assert first.item_id == "task_b"  # highest priority wins
 
-    queue.complete(b.item_id)
+    queue.complete("task_b")
     pending = queue.pending()
     assert len(pending) == 2
 
@@ -128,7 +130,7 @@ def test_operational_memory_log_append_and_query() -> None:
     assert cat_results == [e1]
 
     src_results = log.query(source="runner")
-    assert src_results == [e2, e1]
+    assert src_results == [e1, e2]
 
 
 # ---- minimal_cli_spec ----

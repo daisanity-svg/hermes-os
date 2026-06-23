@@ -1,4 +1,4 @@
-"""Workforce Queue — queued work items for the runtime workforce."""
+"""Workforce Queue — sorted priority queue for work items."""
 
 from __future__ import annotations
 
@@ -9,50 +9,32 @@ from hermes_os.types import WorkforceItem
 
 
 class WorkforceQueue:
-    """MVP skeleton: priority workforce queue."""
-
     def __init__(self) -> None:
-        self._items: dict[str, WorkforceItem] = {}
-        self._order: List[str] = []
+        self._items: Dict[str, WorkforceItem] = {}
+        self._queue: List[WorkforceItem] = []
 
-    def enqueue(
-        self,
-        item_type: str,
-        payload: Optional[Dict[str, object]] = None,
-        priority: int = 0,
-    ) -> WorkforceItem:
-        item = WorkforceItem(
-            item_id=f"wq_{len(self._order) + 1}",
-            item_type=item_type,
-            priority=priority,
-            payload=payload or {},
-        )
+    # ------------------------------------------------------------------
+    # mutation
+    # ------------------------------------------------------------------
+    def enqueue(self, item: WorkforceItem) -> WorkforceItem:
+        if item.item_id in self._items:
+            raise ValueError(f"duplicate workforce item id: {item.item_id}")
         self._items[item.item_id] = item
-        self._order.append(item.item_id)
-        self._sort()
+        self._insert_sorted(item)
         return item
 
     def dequeue(self) -> Optional[WorkforceItem]:
-        while self._order:
-            item_id = self._order.pop(0)
-            item = self._items.get(item_id)
-            if item and item.status == "pending":
-                self._items[item_id] = WorkforceItem(
-                    item_id=item.item_id,
-                    item_type=item.item_type,
-                    priority=item.priority,
-                    status="running",
-                    created_at=item.created_at,
-                    payload=item.payload,
-                )
-                return self._items[item_id]
+        while self._queue:
+            candidate = self._queue.pop(0)
+            self._items.pop(candidate.item_id, None)
+            return candidate
         return None
 
     def complete(self, item_id: str) -> Optional[WorkforceItem]:
-        item = self._items.get(item_id)
+        item = self._items.pop(item_id, None)
         if item is None:
             return None
-        self._items[item_id] = WorkforceItem(
+        return WorkforceItem(
             item_id=item.item_id,
             item_type=item.item_type,
             priority=item.priority,
@@ -60,16 +42,30 @@ class WorkforceQueue:
             created_at=item.created_at,
             payload=item.payload,
         )
-        return self._items[item_id]
+
+    # ------------------------------------------------------------------
+    # queries
+    # ------------------------------------------------------------------
+    def pending(self) -> List[WorkforceItem]:
+        return list(self._queue)
 
     def get(self, item_id: str) -> Optional[WorkforceItem]:
         return self._items.get(item_id)
 
-    def pending(self) -> List[WorkforceItem]:
-        return [i for i in self._items.values() if i.status == "pending"]
-
-    def count(self) -> int:
+    def __len__(self) -> int:
         return len(self._items)
 
-    def _sort(self) -> None:
-        self._order.sort(key=lambda item_id: -self._items[item_id].priority)
+    # ------------------------------------------------------------------
+    # internal helpers
+    # ------------------------------------------------------------------
+    def _insert_sorted(self, item: WorkforceItem) -> None:
+        key = (-item.priority, item.created_at, item.item_id)
+        lo, hi = 0, len(self._queue)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            mid_key = (-self._queue[mid].priority, self._queue[mid].created_at, self._queue[mid].item_id)
+            if mid_key < key:
+                lo = mid + 1
+            else:
+                hi = mid
+        self._queue.insert(lo, item)
