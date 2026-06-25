@@ -1,0 +1,78 @@
+# Chairman Workspace Integration Sprint v1
+# 狀態：signed
+# 版本：1.0.0
+
+work_unit_id: wu-20260625-chairman-workspace-integration-v1
+title: Chairman Workspace Integration Sprint v1
+slug: chairman-workspace-integration-v1
+owner: hermes-engineer
+created_at: "2026-06-25T15:00:00Z"
+signed_by:
+  - founder
+
+task:
+  name: Chairman Workspace Integration Sprint v1
+  goal: |
+    將已完成能力整合到 Chairman Desktop，使 Founder 能在單一 Workspace
+    查看 Active Projects、Active Workflows、Hermes Runs Mirror、
+    Auto Scheduler SortedTaskQueue、Founder Inbox 與 Package Timeline。
+
+scope:
+  allow:
+    - src/hermes_os/command_center/adapter.py
+    - src/hermes_os/command_center/api.py
+    - docs/command-center/index.html
+    - docs/packages/
+    - docs/packages/packages-index.yaml
+    - tests/test_command_center_api.py
+    - tests/test_command_center.py
+  deny:
+    - lib/data/**
+    - app/**
+    - components/**
+    - src/hermes_os/core/**
+    - .env*
+
+success_criteria:
+  structure:
+    - docs/contracts/20260625-chairman-workspace-integration-v1.yaml 狀態為 signed
+    - src/hermes_os/command_center/adapter.py 包含 6 個新方法
+    - src/hermes_os/command_center/api.py 包含 6 個新路由
+    - docs/command-center/index.html 包含 Workspace 底部面板
+    - docs/packages/packages-index.yaml 存在
+  functional:
+    - python -m pytest tests/test_command_center.py tests/test_command_center_api.py -> exit 0
+    - /api/v1/command-center/projects 回傳專案清單
+    - /api/v1/command-center/workflows 回傳執行中的 workflow
+    - /api/v1/command-center/runs 回傳 run 狀態
+    - /api/v1/command-center/scheduler 回傳 SortedTaskQueue
+    - /api/v1/command-center/inbox 回傳 Founder Inbox 待決策事項
+    - /api/v1/command-center/packages 回傳 Package Timeline
+  behavioral:
+    - 手機 320px 可正常使用 Workspace 面板
+    - 一屏化：底部面板預設折疊，展開時不超過 50% 高度
+    - 無 emoji，全繁體中文
+
+rollback: "git revert HEAD 或 git checkout -- src/hermes_os/command_center/adapter.py src/hermes_os/command_center/api.py docs/command-center/index.html docs/packages/"
+
+contract_constraints:
+  min_effort: "8 小時"
+  max_duration_days: 3
+  auto_escalation_after_hours: 12
+
+risks:
+  - risk: 手機螢幕空間不足，底部面板資訊過密
+    mitigation: Workspace 內使用水平捲動卡片，每項資訊簡短
+  - risk: SSOT 檔案不存在導致 API 500
+    mitigation: 所有讀檔加入 try-except，無資料時回傳空列表而非錯誤
+  - risk: 現有 pytest 受改動影響
+    mitigation: 改動僅新增方法與路由，不修改既有行為
+
+references:
+  - docs/chairman-command-center-v1-spec.md
+  - docs/command-center/index.html
+  - src/hermes_os/command_center/adapter.py
+  - src/hermes_os/command_center/api.py
+  - docs/sso/project-status.yaml
+  - docs/sso/contracts-index.yaml
+  - docs/ado-package-protocol-v1.md

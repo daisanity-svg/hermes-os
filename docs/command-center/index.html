@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Command Center — Chairman Desktop</title>
+  <style>
+    :root {
+      --bg: #f7f7f9;
+      --panel: #ffffff;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --accent: #0066cc;
+      --danger: #d32f2f;
+      --warning: #ef6c00;
+      --success: #1e7e34;
+      --border: #e5e5ea;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 10px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0.2px; }
+    p.subtitle { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 10px;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .panel {
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 10px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .panel h2 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .panel .content {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: nowrap;
+    }
+    .metric {
+      flex: 1 1 0;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .metric:last-child { border-bottom: none; }
+    .metric .label { color: var(--muted); font-size: 11px; }
+    .metric .value { font-size: 16px; font-weight: 700; margin-top: 2px; }
+    .score { font-size: 28px; font-weight: 800; }
+    .score.good { color: var(--success); }
+    .score.warn { color: var(--warning); }
+    .score.bad { color: var(--danger); }
+    .ticket {
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: #fafafa;
+      margin-bottom: 6px;
+      border: 1px solid var(--border);
+    }
+    .ticket:last-child { margin-bottom: 0; }
+    .ticket .title { font-weight: 600; font-size: 12px; }
+    .ticket .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .ticket .summary { color: var(--text); font-size: 11px; margin-top: 3px; line-height: 1.35; }
+    .dept-selector {
+      margin-bottom: 6px;
+    }
+    .dept-selector label { font-size: 11px; color: var(--muted); }
+    select {
+      font-size: 12px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 6px 0;
+    }
+    .error-banner {
+      background: #fff3f3;
+      color: var(--danger);
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      margin-top: 6px;
+      border: 1px solid #ffd6d6;
+    }
+    .workspace-drawer {
+      flex-shrink: 0;
+      background: var(--panel);
+      border-top: 2px solid var(--border);
+      transition: height 0.25s ease;
+      height: 34px;
+      min-height: 34px;
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+    }
+    .workspace-drawer.expanded {
+      height: 45vh;
+    }
+    .workspace-drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      height: 34px;
+      flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .workspace-drawer-header h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .workspace-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--text);
+    }
+    .workspace-drawer-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 0 12px 12px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .workspace-card {
+      background: #fafafa;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      min-height: 0;
+    }
+    .workspace-card h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .workspace-card .items {
+      max-height: 140px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .workspace-card .item {
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .workspace-card .item:last-child {
+      border-bottom: none;
+    }
+    .workspace-card .empty {
+      color: var(--muted);
+      font-size: 11px;
+      padding: 4px 0;
+    }
+    @media (max-width: 640px) {
+      .workspace-drawer.expanded {
+        height: 60vh;
+      }
+      .workspace-drawer-body {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 420px) {
+      .workspace-drawer.expanded {
+        height: 45vh;
+      }
+      .workspace-drawer-body {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Chairman Desktop</h1>
+    <p class="subtitle">公司視圖 · 晨間快速掌握組織脈動</p>
+  </header>
+
+  <main>
+    <!-- 公司健康度 -->
+    <section class="panel" id="panel-company">
+      <h2>公司健康度</h2>
+      <div class="row">
+        <div class="metric">
+          <div class="label">總訊號數</div>
+          <div class="value" id="total-signals">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">董事長優先關注</div>
+          <div class="value" id="priority-count">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">高可信度指標</div>
+          <div class="value" id="high-conf-count">--</div>
+        </div>
+      </div>
+      <h3 style="margin:8px 0 6px;font-size:13px;">優先關注事項</h3>
+      <div class="content" id="priority-signals"></div>
+      <div id="company-error" class="error-banner" style="display:none;"></div>
+    </section>
+
+    <!-- 晨間執行摘要 -->
+    <section class="panel" id="panel-brief">
+      <h2>晨間執行摘要</h2>
+      <div class="content" id="brief-container"></div>
+      <div id="brief-error" class="error-banner" style="display:none;"></div>
+    </section>
+
+    <!-- 部門探訪 -->
+    <section class="panel" id="panel-department">
+      <h2>部門探訪</h2>
+      <div class="dept-selector">
+        <label for="dept-select">選擇部門：</label>
+        <select id="dept-select">
+          <option value="engineering">工程</option>
+          <option value="marketing">行銷</option>
+          <option value="customer_service">客服</option>
+        </select>
+      </div>
+      <div class="metric" style="border-bottom:none;padding-top:0;">
+        <div class="label">綜合健康度</div>
+        <div class="score good" id="dept-score">--</div>
+      </div>
+      <div class="content" id="dept-dimensions"></div>
+      <div id="dept-error" class="error-banner" style="display:none;"></div>
+    </section>
+
+    <!-- 人為決策待辦 -->
+    <section class="panel" id="panel-decision">
+      <h2>人為決策待辦</h2>
+      <div class="content" id="decision-container"></div>
+      <div id="decision-error" class="error-banner" style="display:none;"></div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = "/api/v1/command-center";
+
+    async function load(path) {
+      const res = await fetch(path);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`讀取失敗 (${res.status}): ${text || res.statusText}`);
+      }
+      return res.json();
+    }
+
+    function el(id) { return document.getElementById(id); }
+
+    function showError(id, message) {
+      const banner = el(id);
+      if (banner) {
+        banner.textContent = message;
+        banner.style.display = "block";
+      }
+    }
+
+    function hideError(id) {
+      const banner = el(id);
+      if (banner) banner.style.display = "none";
+    }
+
+    function renderCompanyHealth(data) {
+      try {
+        hideError("company-error");
+        const company = data.company_health || {};
+        el("total-signals").textContent = company.total_signals ?? "--";
+        el("priority-count").textContent = company.priority_count ?? "--";
+        el("high-conf-count").textContent = company.high_confidence_count ?? "--";
+        const container = el("priority-signals");
+        container.innerHTML = "";
+        const items = (company.priority_signals || []).slice(0, 4);
+        if (!items.length) {
+          container.innerHTML = '<div class="empty">目前無優先關注事項。</div>';
+          return;
+        }
+        for (const item of items) {
+          const div = document.createElement("div");
+          div.className = "ticket";
+          const depts = (item.related_departments && item.related_departments[0]) || "";
+          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${depts} · ${item.sub_category} · ${new Date(item.as_of).toLocaleDateString("zh-TW")}</div><div class="summary">${item.summary || ""}</div>`;
+          container.appendChild(div);
+        }
+      } catch (e) {
+        showError("company-error", "顯示公司健康度時發生錯誤。");
+      }
+    }
+
+    function renderBrief(items) {
+      try {
+        hideError("brief-error");
+        const container = el("brief-container");
+        container.innerHTML = "";
+        const list = (items || []).slice(0, 3);
+        if (!list.length) {
+          container.innerHTML = '<div class="empty">目前無符合條件的摘要項目。</div>';
+          return;
+        }
+        for (const item of list) {
+          const div = document.createElement("div");
+          div.className = "ticket";
+          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${item.source_system} · ${new Date(item.as_of).toLocaleDateString("zh-TW")} · 可信度 ${Math.round((item.confidence || 0) * 100)}%</div><div class="summary">${item.summary || ""}</div>`;
+          container.appendChild(div);
+        }
+      } catch (e) {
+        showError("brief-error", "顯示執行摘要時發生錯誤。");
+      }
+    }
+
+    function renderDepartment(data) {
+      try {
+        hideError("dept-error");
+        const overall = data.overall_score ?? 0;
+        const scoreEl = el("dept-score");
+        scoreEl.textContent = Number(overall).toFixed(0) + " 分";
+        scoreEl.className = "score " + (overall >= 80 ? "good" : overall >= 70 ? "warn" : "bad");
+        const container = el("dept-dimensions");
+        container.innerHTML = "";
+        const dims = data.dimensions || {};
+        const labels = {
+          velocity: "交付速度",
+          quality: "品質",
+          stability: "穩定性",
+          alignment: "策略對齊",
+          capacity: "人力容量",
+        };
+        Object.entries(dims).forEach(([key, dim]) => {
+          const score = Number(dim.score ?? 0);
+          const color = score >= 80 ? "var(--success)" : score >= 70 ? "var(--warning)" : "var(--danger)";
+          const div = document.createElement("div");
+          div.className = "metric";
+          div.innerHTML = `<div><div class="label">${labels[key] || key}</div><div class="summary">${dim.narrative || ""}</div></div><div class="value" style="color:${color}">${score.toFixed(0)} 分</div>`;
+          container.appendChild(div);
+        });
+        if (!Object.keys(dims).length) {
+          container.innerHTML = '<div class="empty">尚無部門細項資料。</div>';
+        }
+      } catch (e) {
+        showError("dept-error", "顯示部門探訪資料時發生錯誤。");
+      }
+    }
+
+    function renderDecisionQueue(items) {
+      try {
+        hideError("decision-error");
+        const container = el("decision-container");
+        container.innerHTML = "";
+        const list = (items || []).slice(0, 3);
+        if (!list.length) {
+          container.innerHTML = '<div class="empty">目前無待決策事項，部門運作正常。</div>';
+          return;
+        }
+        for (const item of list) {
+          const div = document.createElement("div");
+          div.className = "ticket";
+          const depts = (item.related_departments && item.related_departments[0]) || "";
+          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${depts} · ${item.sub_category} · ${new Date(item.as_of).toLocaleString("zh-TW")}</div><div class="summary">${item.summary || ""}</div>`;
+          container.appendChild(div);
+        }
+      } catch (e) {
+        showError("decision-error", "顯示決策待辦時發生錯誤。");
+      }
+    }
+
+    async function loadOverview() {
+      try {
+        const data = await load(`${API_BASE}/overview`);
+        renderCompanyHealth(data);
+        renderBrief(data.executive_brief || []);
+        renderDecisionQueue(data.decision_queue || []);
+        if (data.department_health) {
+          renderDepartment(data.department_health);
+        }
+      } catch (err) {
+        console.error(err);
+        showError("company-error", "目前無法載入資料，請確認後台服務已啟動，或稍後再試。");
+        showError("brief-error", "目前無法載入資料，請稍後再試。");
+        showError("decision-error", "目前無法載入資料，請稍後再試。");
+      }
+    }
+
+    async function loadDepartment() {
+      try {
+        const dept = el("dept-select").value;
+        const data = await load(`${API_BASE}/department-health?department=${encodeURIComponent(dept)}`);
+        renderDepartment(data);
+      } catch (err) {
+        console.error(err);
+        showError("dept-error", "目前無法載入部門資料，請稍後再試。");
+      }
+    }
+
+    el("dept-select").addEventListener("change", loadDepartment);
+
+    // Workspace Drawer
+    let workspaceLoaded = false;
+    const workspaceDrawer = el("workspace-drawer");
+    const workspaceBtn = el("workspace-btn");
+    workspaceDrawer.querySelector(".workspace-drawer-header").addEventListener("click", () => {
+      workspaceDrawer.classList.toggle("expanded");
+      workspaceBtn.textContent = workspaceDrawer.classList.contains("expanded") ? "收合" : "展開";
+      if (!workspaceLoaded && workspaceDrawer.classList.contains("expanded")) {
+        workspaceLoaded = true;
+        loadWorkspace();
+      }
+    });
+
+    function renderList(containerId, items, formatter) {
+      const container = el(containerId);
+      if (!container) return;
+      container.innerHTML = "";
+      if (!items || !items.length) {
+        container.innerHTML = '<div class="empty">目前無資料。</div>';
+        return;
+      }
+      items.slice(0, 6).forEach((item) => {
+        const div = document.createElement("div");
+        div.className = "item";
+        div.innerHTML = formatter(item);
+        container.appendChild(div);
+      });
+    }
+
+    async function loadWorkspace() {
+      const endpoints = {
+        "ws-projects": "/api/v1/command-center/projects",
+        "ws-workflows": "/api/v1/command-center/workflows",
+        "ws-runs": "/api/v1/command-center/runs",
+        "ws-scheduler": "/api/v1/command-center/scheduler",
+        "ws-inbox": "/api/v1/command-center/inbox",
+        "ws-packages": "/api/v1/command-center/packages",
+      };
+      for (const [container, path] of Object.entries(endpoints)) {
+        try {
+          const data = await load(path);
+          switch (container) {
+            case "ws-projects":
+              renderList(container, (data.contracts || []).slice(0, 6), (c) =>
+                `<strong>${c.slug || c.id}</strong> · ${c.status || "draft"}`
+              );
+              break;
+            case "ws-workflows":
+              renderList(container, data.workflows || [], (w) =>
+                `${w.metadata && w.metadata.name ? w.metadata.name : w.workflow_id} · ${w.status}`
+              );
+              break;
+            case "ws-runs":
+              renderList(container, data.runs || [], (r) => {
+                const color = r.status === "running"
+                  ? "var(--success)"
+                  : r.status === "failed"
+                    ? "var(--danger)"
+                    : "var(--muted)";
+                return `${r.run_id} · <span style="color:${color}">${r.status}</span>`;
+              });
+              break;
+            case "ws-scheduler": {
+              const all = [
+                ...(data.executable || []),
+                ...(data.blocked || []),
+                ...(data.waiting_founder || []),
+                ...(data.founder_decisions || []),
+              ];
+              renderList(container, all.slice(0, 6), (t) =>
+                `${t.title || t.ticket_id || t.task_id || "待辦"} · ${t.priority || ""}`
+              );
+              break;
+            }
+            case "ws-inbox":
+              renderList(container, data.tickets || [], (t) =>
+                `${t.title} · ${t.department || ""} · ${t.status || ""}`
+              );
+              break;
+            case "ws-packages":
+              renderList(container, data.packages || [], (p) =>
+                `<strong>${p.package_id}</strong> · ${p.package_type} · ${p.topic || ""}`
+              );
+              break;
+          }
+        } catch (err) {
+          const container = el(container);
+          if (container) container.innerHTML = '<div class="empty">讀取失敗。</div>';
+        }
+      }
+    }
+
+    loadOverview();
+  </script>
+
+  <!-- Workspace Drawer -->
+  <div class="workspace-drawer" id="workspace-drawer">
+    <div class="workspace-drawer-header" id="workspace-toggle">
+      <h2>Workspace</h2>
+      <button class="workspace-toggle" id="workspace-btn">展開</button>
+    </div>
+    <div class="workspace-drawer-body" id="workspace-body">
+      <div class="workspace-card">
+        <h3>Active Projects</h3>
+        <div class="items" id="ws-projects"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>Active Workflows</h3>
+        <div class="items" id="ws-workflows"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>Hermes Runs Mirror</h3>
+        <div class="items" id="ws-runs"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>Auto Scheduler</h3>
+        <div class="items" id="ws-scheduler"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>Founder Inbox</h3>
+        <div class="items" id="ws-inbox"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>Package Timeline</h3>
+        <div class="items" id="ws-packages"><div class="empty">載入中...</div></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
