@@ -1,0 +1,33 @@
+generated_at: "2026-06-27T00:00:00Z"
+total_contracts: 5
+contracts:
+  - id: wu-20260627-004
+    slug: chairman-phase0-signal-provider
+    path: docs/contracts/20260627-ado-con-signal-provider.yaml
+    sha256: 92494e621779fc6e2857beb4e76cb161b9862c1969fe8a817929654684bcb35b
+    signed: true
+    status: signed
+  - id: wu-20260626-001
+    slug: fir-constitution-bridge
+    path: docs/contracts/20260626-fir-constitution-bridge.yaml
+    sha256: 50b6c036fcc7351c3469ef96f2356bf8bcd5afbad202d821c38528d605bab2d2
+    signed: true
+    status: signed
+  - id: wu-20260625-003
+    slug: command-center-v1
+    path: docs/contracts/20260625-ado-con-003.yaml
+    sha256: f3273c1cec08c228ce31f7a82ccac2030cfba8405e19fb336d3945302ad8f0ca
+    signed: true
+    status: done
+  - id: wu-20260625-002
+    slug: rhythm
+    path: docs/contracts/20260625-ado-operating-rhythm.yaml
+    sha256: 746eeb05d65df7ec67d51445cc3ec5d916e00585a5a7d1f013b66fd274995630
+    signed: false
+    status: draft
+  - id: wu-20260625-001
+    slug: bootstrap
+    path: docs/contracts/20260625-ssot-bootstrap.yaml
+    sha256: 9d5c0323e20fc02e782245a3af9b591e3f9883cd30e33fdc5a03106cd34bfea1
+    signed: false
+    status: done

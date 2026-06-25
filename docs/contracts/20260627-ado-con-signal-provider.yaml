@@ -1,0 +1,268 @@
+work_unit_id: wu-20260627-004
+title: Chairman Experience Phase 0 - Signal Provider Foundation
+slug: chairman-phase0-signal-provider
+owner: hermes-engineer
+created_at: "2026-06-27T00:00:00Z"
+signed_by:
+  - chief-of-staff
+  - hermes-engineer
+
+references:
+  - docs/Chairman_Experience_v1_contract.md
+  - docs/ado-v1-charter.md
+  - docs/fir-v1.md
+  - docs/contracts/20260626-fir-constitution-bridge.yaml
+  - docs/contracts/20260625-ado-con-003.yaml
+
+task:
+  goal: |
+    抽象出通用 Business Signal Provider 層，取代原本散落於 scripts/financial_snapshot_daily.py、
+    scripts/strategic_signal_digest.py 的固定業務模組。建立 Command Center 可讀取的
+    標準化 business signals 層，讓 Department Health、Company Health、Executive Brief、
+    Human Decision Queue 都能從標準化 signals 取得資料。
+
+scope:
+  allow:
+    - docs/contracts/20260627-ado-con-signal-provider.yaml
+    - src/hermes_os/org_learning/signals.py
+    - src/hermes_os/org_learning/providers.py
+    - src/hermes_os/org_learning/health.py
+    - src/hermes_os/org_learning/brief.py
+    - src/hermes_os/org_learning/decision_queue.py
+    - tests/test_signals_providers.py
+    - tests/test_health_signal_integration.py
+    - tests/test_decision_queue_signal_integration.py
+    - scripts/signal_provider_demo.py
+  deny:
+    - src/hermes_os/core/**
+    - app/**
+    - lib/**
+    - .env*
+    - src/hermes_os/action_records.py
+    - src/hermes_os/lifecycle_records.py
+    - src/hermes_os/ownership_records.py
+  must_not_touch:
+    - src/hermes_os/action_records.py
+    - src/hermes_os/lifecycle_records.py
+    - src/hermes_os/ownership_records.py
+    - AGENTS.md
+
+rationale:
+  - item: "避免 fixed business module 僵化"
+    detail: "financial_snapshot_daily.py 與 strategic_signal_digest.py 原本是腳本層級固定業務模組，無法被 Department Health、Decision Queue、Brief 重用，且每次新增 signal 來源就要重寫 ingestion 邏輯。"
+  - item: "Chairman View 需要統一語彙"
+    detail: "Strategic Signal、Financial Snapshot、Department Risk 本質上都是同構的 business signals，而 Command Center 不應關心來源實作，只關心 signal 內容、時間、可信度。"
+  - item: "Executive Brief、Department Health、Decision Queue 都需重複 ingest"
+    detail: "相同的外部 signal（如競品動態）可能同時影響 Company Health 燈號與 Decision Queue 的建議項目。應該只計算一次、共享一次。"
+  - item: "data quality / confidence 是 Chairman View 的核心信任基礎"
+    detail: "Chairman 看到的所有數字必須標註資料時間與信賴度。若每個模組自行定義 confidence 規則，風評標準不一，反而降低信任。"
+
+signal_schema:
+  business_signal_fields:
+    - field: signal_id
+      type: str
+      description: "唯一識別碼"
+    - field: category
+      type: enum
+      values: [Financial, Strategic, Operational, Risk]
+      description: "Signal 分類"
+    - field: sub_category
+      type: str
+      description: "子分類，例如 department_health、market_news、decision_pending"
+    - field: title
+      type: str
+      description: "Chairman 看到的短標題"
+    - field: summary
+      type: str
+      description: "30 字以內摘要，包含數字與趨勢"
+    - field: value
+      type: mixed
+      description: "量化值或文本，可以是 float 或 str 或 None"
+    - field: unit
+      type: mixed
+      description: "單位，例如 個月、%、$K，或 None"
+    - field: as_of
+      type: datetime
+      description: "資料時間"
+    - field: confidence
+      type: float
+      constraint: "0.0 ~ 1.0"
+      description: "信賴度"
+    - field: source_system
+      type: str
+      description: "來源系統，例如 cfo_api、rss_digest、decision_queue"
+    - field: tags
+      type: list
+      description: "標籤"
+    - field: related_departments
+      type: list
+      description: "相關部門"
+    - field: priority_for_chairman
+      type: bool
+      default: false
+      description: "是否為 Chairman 首要關注"
+    - field: numeric_trend
+      type: enum
+      values: [up, down, flat, unknown]
+      description: "與上期比較的趨勢方向"
+    - field: is_low_confidence_estimate
+      type: bool
+      default: false
+      description: "是否為低信賴推估值"
+
+  confidence_rules:
+    - level: high
+      threshold: ">= 0.85"
+      description: "系統直連、API 即時、merchants / operational 原始記錄"
+    - level: medium
+      threshold: "0.50 ~ 0.849"
+      description: "每週 Email / Slack 摘要、AI 解析財務報表"
+    - level: low
+      threshold: "< 0.50"
+      description: "AI 推估、RSS 情緒分析、無原始對帳"
+    - display_note: "is_low_confidence_estimate = true 時，Chairman UI 必須顯示 '推估值' 標籤"
+
+provider_types:
+  - name: FinancialSnapshotProvider
+    description: "提供 Company Financial Snapshot：Runway、Burn、MRR、NRR、現金流。"
+    input: "mock_financial_data.json 或 CFO API"
+    output: "List[BusinessSignal]，category=Financial"
+    confidence_default: 0.9
+    freshness_rule: "每日 06:00 更新"
+
+  - name: StrategicSignalDigestProvider
+    description: "提供 Strategic Signal Digest：競品動態、政策變化、市場指標。"
+    input: "mock_signals.json 或 RSS feeds + AI 摘要"
+    output: "List[BusinessSignal]，category=Strategic"
+    confidence_default: 0.6
+    freshness_rule: "每日 08:00 更新"
+
+  - name: DepartmentHealthSignalProvider
+    description: "從 DepartmentHealthCalculator 計算結果轉為 standardized signals。"
+    input: "DepartmentHealth dataclass"
+    output: "List[BusinessSignal]，category=Operational，sub_category=department_health"
+    confidence_default: 0.85
+    freshness_rule: "每週一 08:00 更新"
+
+  - name: OperationalRiskProvider
+    description: "從 Decision Queue、Watchdog、Incident log 提取 operational risks。"
+    input: "DecisionQueue + Watchdog alerts"
+    output: "List[BusinessSignal]，category=Risk"
+    confidence_default: 0.75
+    freshness_rule: "即時 / 每小時"
+
+data_quality:
+  mandatory_fields_for_chairman:
+    - "signals 必須包含 as_of（資料時間）"
+    - "signals 必須包含 confidence（0.0~1.0）"
+    - "signals 必須包含 is_low_confidence_estimate 布林值"
+  display_rules:
+    - "Chairman UI 所有數字旁必須顯示 '資料時間' 小字"
+    - "confidence < 0.5 時，顯示灰色 + '推估值' 標籤"
+    - "confidence >= 0.85 時，顯示綠色實心圓"
+    - "0.5 <= confidence < 0.85 時，顯示黃色空心圓"
+  trust_calculation:
+    - "Company Health 加權計算時，低 confidence signal 的權重自動減半"
+    - "Department Health 若該部門所有 signals 平均 confidence < 0.6，顯示 '資料不完整' 而非數值"
+
+department_health_integration:
+  layer: "DepartmentHealthCalculator 輸出 DepartmentHealth dataclass"
+  adapter: "新增 DepartmentHealthSignalProvider，將每個 dimension score 轉為 BusinessSignal"
+  example_mapping:
+    - dimension: velocity
+      signal_title: "工程部交付速度"
+      signal_summary: "已交付 {delivered} / 計劃 {planned}"
+      priority_for_chairman: "若 score < 70"
+    - dimension: stability
+      signal_title: "工程部穩定性"
+      signal_summary: "事件數 {incidents}，過去 7 天"
+      priority_for_chairman: "若 score < 70"
+  health_index_refactor: "health.py 的 compute() 方法不直接計算，而是：1) 接收 metrics 2) 產生 DepartmentHealth 3) 由上層 (provider) 轉為 signals 4) signals 提供給 Command Center。compute() 本身不改動簽名，僅擴充 return type 或新增 to_signals() helper。"
+
+decision_queue_integration:
+  layer: "HumanDecisionQueue 是票券生命週期管理"
+  signal_ingress: "OperationalRiskProvider 掃描 Decision Queue 的高優先項目，生成 Risk signals"
+  example_mapping:
+    - source: "DecisionTicket status=PENDING and priority=high"
+      signal_category: Risk
+      signal_sub_category: "human_decision_pending"
+      signal_title: "行銷部等待簽核：Q3 預算重新分配"
+      signal_summary: "提出者：CMO，逾期：還有 2 天"
+      priority_for_chairman: true
+  feedback_loop: "Chairman 對 DecisionTicket 簽核/駁回後，OperationalRiskProvider 將該 ticket 的 status 變更轉為 signal（category=Operational, is_resolved=true），餵回 Executive Brief 作為 '昨日關鍵成果'。"
+
+implementation_tasks:
+  - task: "Signal Schema 定義"
+    deliverable: "src/hermes_os/org_learning/signals.py 新增 BusinessSignal、SignalCategory、NumericTrend、ConfidenceRules"
+    estimate: "2 小時"
+
+  - task: "BusinessSignalProvider 抽象基底"
+    deliverable: "src/hermes_os/org_learning/providers.py 建立 AbstractSignalProvider（ABC）+ Registry"
+    estimate: "3 小時"
+
+  - task: "FinancialSnapshotProvider 實作"
+    deliverable: "src/hermes_os/org_learning/providers.py 內建立 FinancialSnapshotProvider，讀取 mock financial data，輸出 BusinessSignal list"
+    estimate: "2 小時"
+
+  - task: "StrategicSignalDigestProvider 實作"
+    deliverable: "src/hermes_os/org_learning/providers.py 內建立 StrategicSignalDigestProvider，讀取 mock signals，輸出 BusinessSignal list"
+    estimate: "2 小時"
+
+  - task: "DepartmentHealthSignalProvider 實作"
+    deliverable: "src/hermes_os/org_learning/providers.py 內建立 DepartmentHealthSignalProvider，將 DepartmentHealth 轉為 signals"
+    estimate: "2 小時"
+
+  - task: "OperationalRiskProvider 實作"
+    deliverable: "src/hermes_os/org_learning/providers.py 內建立 OperationalRiskProvider，整合 Decision Queue + Watchdog alerts"
+    estimate: "3 小時"
+
+  - task: "Provider Registry + CLI Demo"
+    deliverable: "scripts/signal_provider_demo.py 示範如何註冊 provider、抓取所有 signals、依 confidence 過濾"
+    estimate: "2 小時"
+
+  - task: "health.py / brief.py / decision_queue.py 整合"
+    deliverable: "既有模組不需大幅改寫；新增 to_signals() helper 或 adapter 函式，讓 Command Center 可統一讀取"
+    estimate: "3 小時"
+
+acceptance_verification:
+  structure:
+    - "src/hermes_os/org_learning/signals.py 存在且包含 BusinessSignal schema"
+    - "src/hermes_os/org_learning/providers.py 存在且包含至少 4 個 concrete providers + AbstractSignalProvider ABC"
+    - "tests/test_signals_providers.py 存在且全綠燈"
+    - "tests/test_health_signal_integration.py 存在且驗證 DepartmentHealth -> signals 轉換正確"
+    - "tests/test_decision_queue_signal_integration.py 存在且驗證 DecisionTicket -> Risk signal 轉換正確"
+    - "scripts/signal_provider_demo.py 可執行且印出 aggregated signals"
+  functional:
+    - "python -m pytest -> exit 0（全綠燈）"
+    - "python scripts/signal_provider_demo.py -> exit 0，產出 readable signals summary"
+    - "每個 provider 輸出的 BusinessSignal 皆符合 schema（signal_id、confidence、as_of 必填）"
+    - "DepartmentHealth -> signals 轉換後，五維度分數皆被正確對應到 signal title / summary"
+    - "DecisionQueue pending 項目能產生 Risk signals，且 priority_for_chairman 為 true"
+  behavioral:
+    - "財務 snapshot 的 confidence >= 0.85 時，Chairman View 顯示綠色信任燈"
+    - "strategic signal 的 confidence < 0.5 時，Chairman View 顯示灰色 + '推估值' 標籤"
+    - "低 confidence signal 在公司健康加權計算中權重減半"
+    - "不破壞既有 org_learning 模組簽名（health.compute / build_executive_brief / HumanDecisionQueue）"
+
+contract_constraints:
+  min_effort: "8 小時"
+  max_duration_days: 3
+  auto_escalation_after_hours: 10
+
+risks:
+  - risk: "抽象層過厚，導致既有 module 改動幅度超出預期"
+    mitigation: "Adapters 以 wrapper / helper 形式追加，不修改既有函式簽名；build 失敗時立即回滾。"
+  - risk: "confidence 規則過於主觀，Chairman 不信任"
+    mitigation: "confidence 預設值寫入文件，並在 demo 中展示三種信心等級的視覺差異。"
+  - risk: "schemas.py 被多個模組共用，改動可能連環爆炸"
+    mitigation: "BusinessSignal 以 Pydantic BaseModel 定義，具備 default_factory 向後相容；新增欄位不破壞既有 tests。"
+
+next_task_for_hermes:
+  task_name: "Chairman Experience Phase 0 - Signal Provider Foundation 實作"
+  steps:
+    - "讀取本合約與 src/hermes_os/org_learning/ 既有結構"
+    - "在 src/hermes_os/org_learning/signals.py 與 providers.py 實作 schema + 4 providers + registry"
+    - "在 tests/ 新增 tests/test_signals_providers.py、test_health_signal_integration.py、test_decision_queue_signal_integration.py"
+    - "建立 scripts/signal_provider_demo.py"
+    - "執行 python -m pytest 驗證全綠燈"
+    - "commit 並回報"
