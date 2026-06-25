@@ -1,0 +1,476 @@
+work_unit_id: wu-20260627-005
+title: CoS Auto Task Scheduler v1 — Auto-Scheduling & Watchdog Bridge
+slug: cos-auto-scheduler-v1
+owner: hermes-engineer
+created_at: "2026-06-27T12:00:00Z"
+signed_by:
+  - chief-of-staff
+  - hermes-engineer
+
+references:
+  - docs/ado-phase3-cos-agent-mvp-spec.md
+  - docs/contracts/20260625-ssot-bootstrap.yaml
+  - docs/contracts/20260627-ado-con-signal-provider.yaml
+  - src/hermes_os/types.py
+  - src/hermes_os/watchdog/scheduler.py
+
+task:
+  goal: |
+    在既有 Project Status、Contracts Index、Signal Provider、Runs、
+    Watchdog 基礎上，建立 CoS Auto Task Scheduler v1：
+    讓 ADO OS 能根據系統狀態與 Founder 訊號，自動產生排程決策，
+    並透過 Watchdog 介入異常，實現 Chairman View 的每日自動推進。
+    這是 Phase 1 Closure 後的第一個 Phase 2 能力增量。
+
+rationale:
+  - item: "Pain point：Creator Edition 的 Executive Brief 只會做『報告』，不會主動排程"
+    detail: "Andy 身為 Founder / Chairman，目前每日仍需手動說『繼續』才能推進任務。系統雖然蒐集了 project-status、contracts、runs、decision queue 等資料，但沒有引擎能自動把這些資料轉換為『下一步』。"
+  - item: "Pain point：Decision Queue 的票券無限堆積，沒有人排程處理"
+    detail: "Decision Queue 已存在前端展示，但沒有 Scheduler 根據 priority / dependency / stale age 自動排程處理，導致 board 上看起來有項目，實際上沒有推進。"
+  - item: "Pain point：Watchdog 只記 log 不改變排程"
+    detail: "既有 WatchdogScheduler 只會標記 stagnant，不會把『 stagnation + priority + Founder decision pending 』整合為可執行的排程調整。"
+  - item: "Auto-Scheduling 不需要外部 AI 服務"
+    detail: "v1 用 deterministic rules（signals + project-status + contracts-index + runs +
+    decision-queue）完成自動決策，不需要 GPT。GPT 只在 Founder 決策輔助或 briefing 生成階段使用。"
+  - item: "保留 Chairman 最終否決權"
+    detail: "Scheduler 是 Propose-Schedule，所有 P1/Human-Required 決策仍透過 Decision Queue
+    送交 Founder，不會私自執行敏感操作。"
+
+scope:
+  allow:
+    - docs/contracts/20260627-ado-cos-scheduler-v1.yaml
+    - docs/sso/contracts-index.yaml
+    - src/hermes_os/scheduler/schemas.py
+    - src/hermes_os/scheduler/auto_scheduler.py
+    - src/hermes_os/scheduler/__init__.py
+    - tests/test_auto_scheduler.py
+  deny:
+    - src/hermes_os/watchdog/scheduler.py
+    - src/hermes_os/process_adapter.py
+    - src/hermes_os/org_learning/brief.py
+    - src/hermes_os/types.py
+    - src/hermes_os/action_records.py
+    - src/hermes_os/lifecycle_records.py
+    - src/hermes_os/ownership_records.py
+    - app/**
+    - lib/**
+    - .env*
+  must_not_touch:
+    - src/hermes_os/action_records.py
+    - src/hermes_os/lifecycle_records.py
+    - src/hermes_os/ownership_records.py
+
+# ============================================================
+# 1) 目標與痛點（Contract 觀點）
+# ============================================================
+# 見上方 rationale；本節為結構化歸納。
+goals:
+  - goal_id: G1
+    statement: "Scheduler 每日/每小時自動輸出 Sorted Task Queue，Chairman View 可直接顯示" 
+  - goal_id: G2
+    statement: "系統能自動偵測 project-status / contracts / runs / decision-queue 的阻塞，並調整排程"
+  - goal_id: G3
+    statement: "Watchdog 的 stagnation 偵測結果能直接驅動排程重排（load-shedding、re-run）"
+  - goal_id: G4
+    statement: "所有 Founder 決策需求統一經 Decision Queue 發出，Decision Ticket 能反向影響排程"
+  - goal_id: G5
+    statement: "Scheduler 具備 Guardrails：不自動推進 P1 / Human-Required / system-critical 操作"
+  - goal_id: G6
+    statement: "MVP 可在 hermes-os .venv 直接 pytest，不新增外部相依"
+
+pain_points:
+  - point_id: PP1
+    statement: "Executive Brief 是『看得到但做不了』的被動報告"
+  - point_id: PP2
+    statement: "Decision Queue 缺少排程引擎，票券的年紀比工齡還長"
+  - point_id: PP3
+    statement: "failed / cancelled runs 不被納入『可以重新安排』的候選池"
+  - point_id: PP4
+    statement: "Founder 多數手動決策其實是『對時間敏感的重複型決策』，可 template 化"
+
+# ============================================================
+# 2) CoS Scheduler 的角色
+# ============================================================
+cos_scheduler_role:
+  reports_to: "Chairman / Founder"
+  sits_alongside:
+    - "WatchdogScheduler（現有）"
+    - "DecisionQueue（現有）"
+    - "SignalProvider（現有）"
+    - "ExecutiveBrief（現有）"
+  is_not:
+    - "ProcessAdapter：不執行 run；只產出 schedule proposal"
+    - "Watchdog：不 rebuilt、不 kill process；只 propose schedule changes"
+    - "GPTPlanner：不使用 LLM；v1 用 deterministic rules"
+  primary_output: "SortedTaskQueue"
+  secondary_output:
+    - "ScheduleAuditTrail"
+    - "FounderDecisionQueue（append only）"
+    - "WatchdogActionRequests（suggested）"
+
+# ============================================================
+# 3) 自動排程來源
+# ============================================================
+scheduling_sources:
+  - name: project-status
+    path: docs/sso/project-status.yaml
+    fields_used:
+      - current_work_unit
+      - blocked
+      - blocked_reason
+      - maturity
+    trigger:
+      - status blocked == true -> 產生 FounderDecisionTicket（原因 + 建議解除路徑）
+      - maturity phase_change -> 產生 milestone queue
+
+  - name: contracts-index
+    path: docs/sso/contracts-index.yaml
+    fields_used:
+      - status
+      - sha256
+    trigger:
+      - status == draft / in_progress -> 加入 execution candidate pool
+      - status == done -> 標記完成並歸檔
+      - absent from working tree -> 產生 sync ticket
+
+  - name: packages
+    path: docs/sso/project-status.yaml (derived)
+    notes: "Packages 是 Roadmap/Milestone 的承載單位。Scheduler 以 completed_packages /
+    pending_packages 角度蒐整しても，透過 milestone 視角排程。"
+
+  - name: runs
+    source: hermes_os run-state / ControlCenterSnapshot / .hermes/state (future)
+    fields_used:
+      - status: queued | running | completed | failed | cancelled
+      - started_at / finished_at
+    trigger:
+      - status == failed 且 retryable=true -> candidate pool（老條件的 retry 候補）
+      - status == cancelled 且 reason=stale -> 重新排程候補
+      - status == running 且 duration > sla -> 產生 Watchdog escalation candidate
+
+  - name: founder-inbox
+    source: DecisionQueue (docs/ado-phase3-cos-agent-mvp-spec.md 定義之票券系統)
+    fields_used:
+      - ticket_id
+      - priority
+      - status
+      - created_at
+      - due_at
+    trigger:
+      - status == pending 且 priority in (high, critical) -> Scheduler 必須在其餘排程中考量
+      - status == pending > 24h -> 升等 priority 並通知 Founder
+      - status == approved -> 從 pending 移出並標記為已排程 / 已完成
+
+  - name: watchdog-stagnation
+    source: src/hermes_os/watchdog/storage.py -> WatchdogStorage
+    trigger:
+      - consecutive_idle_checks >= threshold -> 產生 candidate（re-run 或 escalate）
+      - health_status == degraded -> 產生 FounderDecisionTicket（是否暫停 non-P1 任務）
+
+# ============================================================
+# 4) 任務優先級規則
+# ============================================================
+priority_rules:
+  levels:
+    - level: P0
+      meaning: "Critical — 系統卡死、契約嚴重 breach、 Founder 安全相關"
+      auto_executable: false
+      max_queue: 1
+      sla_hours: 2
+      requires_founder_decision: true
+      example:
+        - "project-status blocked=true 且無解除條件"
+        - "contract breach_type=critical"
+        - "DecisionQueue priority=critical 且逾期"
+
+    - level: P1
+      meaning: "High — 影響 Release 路線、Block 下游、Watchdog 嚴重警報"
+      auto_executable: false
+      max_queue: 3
+      sla_hours: 8
+      requires_founder_decision: true
+      example:
+        - "contract signed 且 P0 milestone 相依"
+        - "run failed 三次自動重試仍失敗"
+        - "DecisionQueue priority=high 且 due_at 間隔 < 24h"
+
+    - level: P2
+      meaning: "Medium — Roadmap 正常推進、測試 / 重構 / 小幅改善"
+      auto_executable: true
+      max_queue: 5
+      sla_hours: 48
+      requires_founder_decision: false
+      example:
+        - "已簽核 contract 的一般 task"
+        - "重複性模式確認後自動 template"
+
+    - level: P3
+      meaning: "Low — 文檔、排程調整、watchdog 自動 re-run、cleanup"
+      auto_executable: true
+      max_queue: 999
+      sla_hours: 168
+      requires_founder_decision: false
+
+  tie_breakers:
+    - rule: "同等 priority 且同 source -> FIFO（created_at 早者在前）"
+    - rule: "同等 priority 且不同 source -> P0/P1 依 FounderDecision 成熟度優先；P2/P3 依 '最短完成時間'（shortest job first）"
+    - rule: "若都一樣 -> 哈希 item_id 排序（只為可預測，非業務邏輯）"
+
+  drift:
+    enabled: true
+    threshold_hours: 4
+    action: "priority_class -= 1（上升一級），但不得超過 P0"
+    notify_founder_on_drift: false
+    notify_founder_when: "priority == P0 且 drift 發生"
+
+# ============================================================
+# 5) 依賴與阻塞判斷
+# ============================================================
+dependency_rules:
+  sources:
+    - "contracts-index.yaml 現有 contract 的 slug（roadmap 視角）"
+    - "project-status 的 maturity milestone 序列"
+    - "runs 的 input/output artifact 傳遞關係（未來）"
+  graph_type: "acyclic directed graph（v1 簡化：單向 list + milestone sequence）"
+  blocking_signals:
+    - condition: "task.depends_on 有任一項狀態 != 'completed'"
+      result: "status = blocked"
+      action: "記錄 blocking_item 清單"
+
+  auto_unblock:
+    condition: "所有 depends_on 成立且 task.auto_start == true"
+    result: "status = queued，priority 依原本 levels 設定"
+
+  cycle_detection:
+    v1_support: false
+    fallback: "若任一 task 重複列入 depends_on -> 標記 blocked 並產生 FounderDecisionTicket"
+
+# ============================================================
+# 6) 何時自動推進、何時等待 Founder
+# ============================================================
+autonomy_matrix:
+  can_auto:
+    - "P2/P3 且有 completed dependencies"
+    - "P2 重複性自動化模板（galleries / lessons / reports）"
+    - "failed run 的 auto-retry（max 1 次，fail-fast）"
+    - "cancelled run 且 reason=stale，重新排程（P3）"
+    - "pending Founder DecisionTicket 的 age 自動升等 priority"
+    - "queue 內 task 的 drift 調整"
+
+  must_wait_founder:
+    - "任何 P0 任務"
+    - "任何 P1 任務"
+    - "新 milestone / macro-task 建立"
+    - "contract draft -> locked"
+    - "涉及監督者本人（Andy/Founder）職責的變更（mode switch, governance policy change）"
+    - "system-wide 影響的操作（rebuild all, migrate data）"
+    - "cost / budget 變更（自動花錢、自動購買 GPU hours）"
+    - "security / privacy 邊界放寬（model permission change）"
+
+  founder_decision_channel:
+    interface: "DecisionQueue"
+    sla: "P0=2h、P1=8h、P2=48h、P3=1w"
+    on_sla_breach:
+      - "Scheduler 標記 overdue"
+      - "每日 Brief 中標紅"
+      - "不自動 bypass（保留否決權）"
+
+# ============================================================
+# 7) 每日/每小時排程節奏
+# ============================================================
+scheduling_rhythm:
+  hourly_scan:
+    cron: "0 * * * *"
+    actions:
+      - "collect project-status / contracts / runs / decision-queue"
+      - "run Watchdog.run_once() 取得 stagnation signals"
+      - "re-rank candidate queue（drift + new arrivals）"
+      - "emit new FounderDecisionTickets（若有上一個小時內新 blocked item）"
+      - "append audit-trail entry"
+
+  daily_brief_trigger:
+    cron: "0 8 * * *"
+    actions:
+      - "觸發 ExecutiveBrief 更新（以 today's queue + yesterday's completed 為 input）"
+      - "補上 FounderDecisionQueue 明日到期項目"
+      - " Chairman View / CLI 都可查"
+
+  packaging_phase:
+    notes: "MVP 不啟用真正 cron；以 CLI 手動觸發（hermes scheduler run-once、
+    hermes scheduler brief-daily）。Phase 2 再把 CLI 接到 systemd timer / APScheduler。"
+
+# ============================================================
+# 8) Watchdog 如何介入
+# ============================================================
+watchdog_integration:
+  inputs:
+    - "WatchdogStorage.upsert_task_state() -> consecutive_idle_checks"
+    - "WatchdogStorage.list_running() -> 超時標記"
+  actions:
+    - condition: "consecutive_idle_checks >= 3 且 task in active_queue"
+      action: "auto_priority += 1 並附 reason 'stagnation_watchdog'"
+
+    - condition: "consecutive_idle_checks >= 6 且 task in P2"
+      action: "emit FounderDecisionTicket: 是否手動撤銷 or 人工介入"
+
+    - condition: "health_status == degraded 且 queue_depth > 5"
+      action: "load-shedding：暫停所有 P3 task，保留 P0/P1/P2"
+
+    - condition: "health_status == critical"
+      action: "全面暫停（pause all），等待 Founder 確認後再開啟"
+
+  guard:
+    - "Watchdog 不具 commit / push / destroy 能力"
+    - "Watchdog output 為 Scheduler 的 input，不是 driver"
+
+# ============================================================
+# 9) 安全 Guardrails
+# ============================================================
+security_guardrails:
+  - rule_id: SG1
+    name: "MVP scope fence"
+    description: "Scheduler 只能讀取 scope.allow 內檔案，絕不碰 action_records / lifecycle_records / ownership_records"
+    enforcement: "unit test + integration test AssertReadOnly"
+
+  - rule_id: SG2
+    name: "P0/P1 auto-execution ban"
+    description: "即使所有條件滿足了，auto_executable=true 也不接受 P0/P1；改為 emit FounderDecisionTicket"
+    enforcement: "Scheduler.candidate_auto_executable() 中的 assert priority not in (P0,P1)"
+
+  - rule_id: SG3
+    name: "max_running_cap"
+    description: "Scheduler 絕不會建議目前 queue 中 running_tasks > max_concurrent（v1 = 3）"
+    enforcement: "before_propose: assert len(running) < max_concurrent"
+
+  - rule_id: SG4
+    name: "file_system_read_only"
+    description: "Scheduler v1 只輸出 SortedTaskQueue（data structure）+ ScheduleAuditTrail（data structure），不改寫任何 docs/ 檔案"
+    enforcement: "tests/test_auto_scheduler.py 的 NoFileWriteAssert"
+
+  - rule_id: SG5
+    name: "founder_easy_stop"
+    description: "Chairman View / CLI 可隨時 'pause scheduler' / 'clear queue' / 'override priority'；Scheduler 必須服從"
+    enforcement: "Scheduler.state 有 paused / paused 下不 propose"
+
+  - rule_id: SG6
+    name: "external_network_not_called"
+    description: "v1 Scheduler 不呼叫任何 internet API（不用 OpenAI、不用 web_search）；所有 signal 皆為本地/靜態資料"
+    enforcement: "dependency check in tests/test_auto_scheduler.py"
+
+# ============================================================
+# 10) MVP 實作任務
+# ============================================================
+mvp_tasks:
+  - task_id: M-1
+    name: "Scheduler Schema + Dataclasses"
+    deliverable: "src/hermes_os/scheduler/schemas.py"
+    depends_on: []
+    acceptance_criteria:
+      - "TaskCandidate dataclass 包含 item_id, priority, source, status, depends_on, auto_start, sla_finish_at"
+      - "TaskPriority enum: P0, P1, P2, P3"
+      - "AutoSchedulerConfig dataclass"
+      - "pydantic or dataclass validatable"
+
+  - task_id: M-2
+    name: "AutoScheduler Engine（core）"
+    deliverable: "src/hermes_os/scheduler/auto_scheduler.py"
+    depends_on: [M-1]
+    acceptance_criteria:
+      - "reload() 從 project-status + contracts-index + decision_queue 收集 candidates"
+      - "resolve_dependencies() 標記 blocked vs queued"
+      - "apply_drift() 每 4h 上升一級"
+      - "propose() 回傳 SortedTaskQueue"
+      - "SG2 / SG3 guard 合規"
+
+  - task_id: M-3
+    name: "Watchdog Manual Bridge"
+    deliverable: "auto_scheduler.py ingest_watchdog_signals()"
+    depends_on: [M-2]
+    acceptance_criteria:
+      - "檢入 watchdog.scheduler.run_once() 的 stagnant tasks"
+      - "consecutive_idle_checks >= 3 -> priority 上升"
+      - "health_status == critical -> pause_all()"
+
+  - task_id: M-4
+    name: "Unit Tests + Integration Tests"
+    deliverable: "tests/test_auto_scheduler.py"
+    depends_on: [M-1, M-2, M-3]
+    acceptance_criteria:
+      - "sample project-status.yaml (blocked=true)"
+      - "sample contracts-index.yaml (draft, signed, done)"
+      - "sample decision_queue (priority=high, pending)"
+      - "SG1..SG6 各有一 fail -> 那支 test 會 fail"
+      - "pytest -q -> exit 0"
+
+  - task_id: M-5
+    name: "CLI Expose（hermes scheduler run-once / audit-log）"
+    deliverable: "src/hermes_os/minimal_cli_spec/cli.py 增加 scheduler 子命令"
+    depends_on: [M-4]
+    acceptance_criteria:
+      - "hermes scheduler run-once -> proposal outline"
+      - "hermes scheduler audit-log -> last 10 entries"
+      - "hermes scheduler pause / resume"
+
+# ============================================================
+# 11) 驗收標準
+# ============================================================
+acceptance_criteria:
+  structure:
+    - "docs/contracts/20260627-ado-cos-scheduler-v1.yaml 已存在且狀態 = signed"
+    - "src/hermes_os/scheduler/__init__.py 可 from hermes_os.scheduler import AutoScheduler"
+    - "tests/test_auto_scheduler.py 存在且全綠燈"
+
+  functional:
+    - "AutoScheduler.reload() 讀取 docs/sso/project-status.yaml + docs/sso/contracts-index.yaml 無 error"
+    - "AutoScheduler.propose() 在空態（無 runs / 無 decision queue）下回傳 SortedTaskQueue 且 len() == 0"
+    - "AutoScheduler.propose() 在 project-status blocked=true 下回傳 FounderDecisionTicket 且 len() >= 1"
+    - "AutoScheduler.propose() 在 contracts-index signed contract 下回傳 candidate（P2）"
+    - "SG2 守衛：傳入 P0 candidate 時 assert 或 emit FounderDecisionTicket，不會給予 auto_executable=true"
+    - "SG3 守衛：running_tasks == max_concurrent 時不再 propose 新的 executable task"
+    - "drift 邏輯：self.clock 前進 5 小時後 propose 內 candidate priority += 1"
+
+  integration_with_existing:
+    - "tests/test_auto_scheduler.py 使用 WatchdogScheduler 或 mock run_once() 產生 stagnant"
+    - "SignalProvider 的 OperationalRiskProvider 組出的 Decision Ticket 可作為 Scheduler 的 input"
+    - "contracts-index.yaml 的 signed contract 在提议時需符合 work_unit_id 唯一性"
+
+  process:
+    - "python -m pytest tests/test_auto_scheduler.py -q -> exit 0"
+    - "python -m pytest tests/ -q -> exit 0（不破壞既有測試）"
+    - "Scheduler 不寫入任何 docs/ 或 SSOT 檔案（SG4）"
+    - "git add docs/contracts/20260627-ado-cos-scheduler-v1.yaml src/hermes_os/scheduler/ tests/test_auto_scheduler.py"
+
+# ============================================================
+# 12) 下一個可交給 Hermes 執行的具體任務
+# ============================================================
+next_task_for_hermes:
+  task_name: "CoS Auto Scheduler v1 MVP 實作"
+  deliverables:
+    - "docs/contracts/20260627-ado-cos-scheduler-v1.yaml（本文件）"
+    - "src/hermes_os/scheduler/schemas.py（TaskPriority, TaskCandidate, SortedTaskQueue, AutoSchedulerConfig）"
+    - "src/hermes_os/scheduler/auto_scheduler.py（AutoScheduler class，含 reload/propose/drift/emit_ticket）"
+    - "src/hermes_os/scheduler/__init__.py（from .auto_scheduler import AutoScheduler）"
+    - "tests/test_auto_scheduler.py（full coverage including SG1..SG6）"
+
+  test_commands:
+    - "cd ~/AI-Workspace/hermes-os && .venv/bin/python -m pytest tests/test_auto_scheduler.py -q"
+    - "cd ~/AI-Workspace/hermes-os && .venv/bin/python -m pytest tests/ -q"
+
+  verification_checklist:
+    - "python -c 'from hermes_os.scheduler import AutoScheduler; print(AutoScheduler)' -> success"
+    - "AutoScheduler.reload() 不报错"
+    - "AutoScheduler.propose() 在 empty state 下回傳長度 0 的 SortedTaskQueue"
+    - "SG2 guard 在注入 P0 candidate 時不 violation（emit ticket）"
+    - "tests/ -q 全綠燈"
+
+  rollback:
+    - "git checkout HEAD -- src/hermes_os/scheduler/ tests/test_auto_scheduler.py"
+    - "git rm docs/contracts/20260627-ado-cos-scheduler-v1.yaml（若需要）"
+
+completion_report:
+  required_outputs:
+    - "本合約狀態從 signed 改成 done（簽核後）"
+    - "tests/test_auto_scheduler.py 全綠燈"
+    - "docs/contracts/20260627-ado-cos-scheduler-v1.yaml 中 validation 段落套用 pytest output"
+
+status: signed
