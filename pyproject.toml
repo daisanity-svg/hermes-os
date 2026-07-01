@@ -21,7 +21,11 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = []
+dependencies = [
+    "aiohttp>=3.9",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
 
 [project.optional-dependencies]
 dev = [
