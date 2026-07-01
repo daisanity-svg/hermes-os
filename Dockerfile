@@ -12,10 +12,9 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY docs ./docs
-COPY tests ./tests
 COPY scripts ./scripts
 
-RUN pip install --no-cache-dir build && \
+RUN pip install --no-cache-dir build python-dotenv && \
     python -m build --wheel --no-isolation && \
     pip install --no-cache-dir dist/*.whl && \
     rm -rf dist build
