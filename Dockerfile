@@ -14,10 +14,7 @@ COPY src ./src
 COPY docs ./docs
 COPY scripts ./scripts
 
-RUN pip install --no-cache-dir build python-dotenv && \
-    python -m build --wheel --no-isolation && \
-    pip install --no-cache-dir dist/*.whl && \
-    rm -rf dist build
+RUN pip install --no-cache-dir .
 
 EXPOSE 8765
 
