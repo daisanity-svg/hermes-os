@@ -13,6 +13,11 @@ pip install -e ".[dev]"
 python -m pytest tests/ -q
 ```
 
+## Chairman Desktop（Command Center）
+
+詳細操作說明參見 `README.md` 根目錄的 Chairman Desktop 章節。
+本機啟動後瀏覽器開啟 `http://127.0.0.1:8765/`。
+
 ## 對接 Hermes Agent
 
 ```bash

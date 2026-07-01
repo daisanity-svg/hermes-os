@@ -164,6 +164,40 @@ paths:
                     run_id: run-1
                     params:
                       key: value
+  /v1/runs/{run_id}/wait:
+    get:
+      operationId: waitRun
+      summary: 查詢 run 狀態（三層查詢）
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: run 狀態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workforce_item_id:
+                    type: string
+                  status:
+                    type: string
+                  updated_at:
+                    type: string
+                  found_in:
+                    type: string
+                    enum: [registry, sqlite_registry, jsonl_journal, none]
+                    description: 此次查询命中的存储层
+                  last_event:
+                    type: string
+                  output:
+                    type: object
+                  error:
+                    type: string
   /v1/artifacts:
     get:
       operationId: listArtifacts
@@ -229,6 +263,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArtifactRef'
+  /v1/runs/{run_id}/artifacts:
+    get:
+      operationId: listRunArtifacts
+      summary: 依 run_id 列出 artifacts
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 指定 run 的 artifacts。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id:
+                    type: string
+                  artifacts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        artifact_id:
+                          type: string
+                        filename:
+                          type: string
+                        content_type:
+                          type: string
+                        size_bytes:
+                          type: integer
+                        created_at:
+                          type: string
+                          format: date-time
+                        sha256:
+                          type: string
+                        absolute_path:
+                          type: string
   /v1/auth/refresh:
     post:
       operationId: refreshToken
@@ -363,6 +439,127 @@ paths:
                       adapter_connected: true
                       queue_available: true
                       database_available: true
+  /v1/approvals:
+    get:
+      operationId: listApprovalsV1
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Pending approvals and waiting_for_approval runs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalListResponseV1'
+              examples:
+                pending:
+                  value:
+                    pending_approvals: []
+                    waiting_for_approval_runs: []
+                    total_pending: 0
+  /v1/runs/{run_id}/approve:
+    post:
+      operationId: approveRun
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Run approved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalActionResponse'
+        '404':
+          description: Run or pending items not found.
+  /api/cdl:
+    get:
+      operationId: getCdlOverview
+      security: []
+      parameters:
+        - name: project_code
+          in: query
+          schema:
+            type: string
+          description: project_code filter (supports aliases such as hermes_os)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Continuous Development Loop overview filtered by project_code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_code:
+                    type: string
+                  loop_state:
+                    type: string
+                  stop_reason:
+                    type: string
+                  completed_count:
+                    type: integer
+                  founder_tickets_count:
+                    type: integer
+                  recent_runs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        run_id:
+                          type: string
+                        task_name:
+                          type: string
+                        status:
+                          type: string
+                        updated_at:
+                          type: string
+                          format: date-time
+                        project_code:
+                          type: string
+                        project_name:
+                          type: string
+  /v1/runs/{run_id}/reject:
+    post:
+      operationId: rejectRun
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Run rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalActionResponse'
+        '404':
+          description: Run or pending items not found.
 
 components:
   securitySchemes:
@@ -593,6 +790,74 @@ components:
           enum:
             - approve
             - reject
+    ApprovalListResponseV1:
+      type: object
+      required:
+        - pending_approvals
+        - waiting_for_approval_runs
+        - total_pending
+      properties:
+        pending_approvals:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalRecord'
+        waiting_for_approval_runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalRunRecord'
+        total_pending:
+          type: integer
+    ApprovalRunRecord:
+      type: object
+      required:
+        - run_id
+        - task_name
+        - reason
+        - status
+      properties:
+        run_id:
+          type: string
+        task_name:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        project_code:
+          type: string
+        project_name:
+          type: string
+    ApprovalActionResponse:
+      type: object
+      required:
+        - run_id
+        - action
+      properties:
+        run_id:
+          type: string
+        action:
+          type: string
+          enum:
+            - approve
+            - reject
+        approved_count:
+          type: integer
+        rejected_count:
+          type: integer
+        approved_items:
+          type: array
+          items:
+            type: object
+        rejected_items:
+          type: array
+          items:
+            type: object
+        updated_at:
+          type: string
+          format: date-time
     HealthResponse:
       type: object
       required:

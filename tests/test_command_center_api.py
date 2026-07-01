@@ -102,6 +102,16 @@ class TestCommandCenterAdapter:
         assert "by_category" in result
         assert "dimension_scores" in result
 
+    def test_get_reliability_overview_returns_counts(self) -> None:
+        adapter = CommandCenterAdapter()
+        result = adapter.get_reliability_overview()
+        assert "counts" in result
+        assert "recent_abnormal" in result
+        assert "founder_tickets" in result
+        for key in ("running", "completed", "failed", "lost", "recovering", "needs_founder_decision"):
+            assert key in result["counts"]
+            assert isinstance(result["counts"][key], int)
+
 
 class TestCommandCenterAPI:
     def test_overview_endpoint(self, live_server: str) -> None:
@@ -173,3 +183,220 @@ class TestCommandCenterAPI:
         with urllib.request.urlopen(url) as resp:
             data = json.loads(resp.read())
         assert data["department"] == "marketing"
+
+    def test_reliability_endpoint_returns_counts(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/v1/command-center/reliability"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert "counts" in data
+        assert "recent_abnormal" in data
+        assert "founder_tickets" in data
+
+    def test_reliability_counts_are_numeric(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/v1/command-center/reliability"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        for key in ("running", "completed", "failed", "lost", "recovering", "needs_founder_decision"):
+            assert isinstance(data["counts"].get(key), int)
+
+
+class TestCommandCenterHostBinding:
+    def test_run_accepts_configurable_host_0_0_0_0(self) -> None:
+        port = _free_port()
+        server = run(host="0.0.0.0", port=port)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        time.sleep(0.2)
+        assert server.server_address[0] == "0.0.0.0"
+        assert server.server_address[1] == port
+        server.shutdown()
+
+    def test_run_accepts_configurable_host_localhost(self) -> None:
+        port = _free_port()
+        server = run(host="127.0.0.1", port=port)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        time.sleep(0.2)
+        assert server.server_address[0] == "127.0.0.1"
+        assert server.server_address[1] == port
+        server.shutdown()
+
+    def test_run_accepts_configurable_host_and_port(self) -> None:
+        port = _free_port()
+        server = run(host="127.0.0.1", port=port)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        time.sleep(0.2)
+        assert server.server_address == ("127.0.0.1", port)
+        server.shutdown()
+
+
+class TestCommandCenterApprovalAPI:
+    def test_approvals_endpoint_returns_empty_by_default(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/v1/command-center/approvals"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert "pending_approvals" in data
+        assert "waiting_for_approval_runs" in data
+        assert "total_pending" in data
+        assert data["total_pending"] == 0
+
+    def test_v1_approvals_alias_returns_empty(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/v1/approvals"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert "pending_approvals" in data
+        assert "waiting_for_approval_runs" in data
+
+    def test_approve_run_updates_journal_and_adapter(self, live_server: str) -> None:
+        import urllib.request
+        from hermes_os.command_center.api import _CommandCenterHandler
+
+        # Use the handler's shared instances so the API sees the same state.
+        journal = _CommandCenterHandler._run_journal
+        adapter = _CommandCenterHandler._process_adapter
+        approval = _CommandCenterHandler._approval_records
+
+        # Reset just this run to keep other tests isolated
+        journal.update("approval-run-1", status="cancelled") if journal.get("approval-run-1") else None
+        adapter._run_registry.pop("item-1", None)
+        approval._records.pop("item-1", None)
+        approval._records.pop("approval-run-1", None)
+
+        journal.append(
+            run_id="approval-run-1",
+            task_name="審批測試任務",
+            status="waiting_for_approval",
+        )
+        adapter.submit({
+            "id": "item-1",
+            "type": "task",
+            "priority": 1,
+            "run_id": "approval-run-1",
+            "approval_status": "pending",
+            "payload": {},
+        })
+        approval.start("item-1")
+
+        url = f"{live_server}/v1/runs/approval-run-1/approve"
+        req = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+        assert data["run_id"] == "approval-run-1"
+        assert data["action"] == "approve"
+        assert data["approved_count"] >= 1
+
+    def test_reject_run_returns_rejected_count(self, live_server: str) -> None:
+        import urllib.request
+        from hermes_os.command_center.api import _CommandCenterHandler
+
+        journal = _CommandCenterHandler._run_journal
+        adapter = _CommandCenterHandler._process_adapter
+        approval = _CommandCenterHandler._approval_records
+
+        journal.update("reject-run-1", status="cancelled") if journal.get("reject-run-1") else None
+        adapter._run_registry.pop("item-2", None)
+        approval._records.pop("item-2", None)
+        approval._records.pop("reject-run-1", None)
+
+        journal.append(
+            run_id="reject-run-1",
+            task_name="駁回測試任務",
+            status="waiting_for_approval",
+        )
+        adapter.submit({
+            "id": "item-2",
+            "type": "task",
+            "priority": 1,
+            "run_id": "reject-run-1",
+            "approval_status": "pending",
+            "payload": {},
+        })
+        approval.start("item-2")
+
+        url = f"{live_server}/v1/runs/reject-run-1/reject"
+        req = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+        assert data["run_id"] == "reject-run-1"
+        assert data["action"] == "reject"
+
+    def test_approve_missing_run_returns_404(self, live_server: str) -> None:
+        import urllib.request
+        import urllib.error
+
+        url = f"{live_server}/v1/runs/does-not-exist/approve"
+        req = urllib.request.Request(url, method="POST")
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(req)
+        assert exc.value.code == 404
+
+
+class TestCDLEndpoint:
+    def test_cdl_endpoint_returns_overview(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/cdl"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert "project_code" in data
+        assert "loop_state" in data
+        assert "recent_runs" in data
+
+    def test_cdl_filters_by_project_code(self, live_server: str) -> None:
+        import urllib.request
+        from hermes_os.command_center.api import _CommandCenterHandler
+
+        journal = _CommandCenterHandler._run_journal
+        journal.append(run_id="run-cdl-1", task_name="t1", status="completed", project_code="proj-a")
+        journal.append(run_id="run-cdl-2", task_name="t2", status="completed", project_code="proj-b")
+
+        try:
+            url = f"{live_server}/api/cdl?project_code=proj-a"
+            with urllib.request.urlopen(url) as resp:
+                data = json.loads(resp.read())
+            assert data["project_code"] == "proj-a"
+            assert len(data["recent_runs"]) >= 1
+            assert all(r["project_code"] == "proj-a" for r in data["recent_runs"])
+        finally:
+            journal._entries.pop("run-cdl-1", None)
+            journal._entries.pop("run-cdl-2", None)
+
+    def test_cdl_default_project_code_is_canonical(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/cdl"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert data["project_code"] == "hermes-os"
+
+
+class TestCosEndpoints:
+    def test_cos_status_endpoint_returns_operational_status(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/v1/command-center/cos-status"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert "operational_status" in data
+        assert "idle_reason" in data
+        assert data["operational_status"] in ("idle", "running", "blocked", "waiting_founder", "error")
+        assert "cos_state" in data
+        assert "loop_state" in data
+
+    def test_cos_progress_endpoint_returns_progress_report(self, live_server: str) -> None:
+        import urllib.request
+
+        url = f"{live_server}/api/v1/command-center/cos/progress"
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+        assert "project_code" in data
+        assert "completed" in data

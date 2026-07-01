@@ -121,3 +121,20 @@ class MemoryLogEntry:
     occurred_at: datetime = field(default_factory=datetime.utcnow)
     content: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RunJournalEntry:
+    """Persistent run journal entry for reliability tracking."""
+
+    run_id: str
+    task_name: str
+    status: str = "queued"
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    last_event: Optional[str] = None
+    error: Optional[str] = None
+    project_code: Optional[str] = None
+    project_name: Optional[str] = None
+    next_action: Optional[str] = None
+    retry_count: int = 0

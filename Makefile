@@ -6,8 +6,12 @@ help:
 	@echo "  make lint    - run static checks"
 	@echo "  make fmt     - format source code"
 	@echo "  make run     - run the CLI runner"
+	@echo "  make command-center - launch Chairman Desktop"
 	@echo "  make build   - build wheel/sdist"
 	@echo "  make clean   - clean build/test artifacts"
+
+command-center:
+	@python scripts/start_command_center.py
 
 test:
 	python -m pytest tests/ -q

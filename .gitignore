@@ -3,3 +3,12 @@ __pycache__/
 *.pyc
 *.pyo
 .artifacts_e2e/
+dist/
+build/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.jsonl

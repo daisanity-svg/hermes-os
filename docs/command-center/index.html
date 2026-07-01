@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0066cc" />
+  <meta name="description" content="Chairman Desktop — 公司視圖，晨間快速掌握組織脈動" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Chairman" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <title>Command Center — Chairman Desktop</title>
   <style>
     :root {
@@ -35,6 +42,51 @@
     }
     h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0.2px; }
     p.subtitle { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .notification-bar {
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .connection-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .connection-dot.offline { background: var(--danger); }
+    .notification-bar button {
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      min-height: 36px;
+      touch-action: manipulation;
+    }
+    .notification-bar button:hover { background: #f5f5f7; }
+    .notification-bar .status {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .cos-status {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #f0f0f5;
+      color: var(--text);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .cos-status.idle { background: #fffbea; color: #b78200; border-color: #f5d76e; }
+    .cos-status.running { background: #e6f4ea; color: var(--success); border-color: #b7e1c8; }
+    .cos-status.blocked, .cos-status.waiting_founder { background: #fce8e6; color: var(--danger); border-color: #f5b7b1; }
+    .cos-status.error { background: #fce8e6; color: var(--danger); border-color: #f5b7b1; }
     main {
       flex: 1 1 auto;
       min-height: 0;
@@ -45,6 +97,7 @@
       padding: 10px;
       max-width: 100%;
       margin: 0 auto;
+      overflow-y: auto;
     }
     .panel {
       background: var(--panel);
@@ -99,11 +152,14 @@
     }
     .dept-selector label { font-size: 11px; color: var(--muted); }
     select {
-      font-size: 12px;
-      padding: 4px 6px;
-      border-radius: 6px;
+      font-size: 14px;
+      padding: 8px 12px;
+      border-radius: 8px;
       border: 1px solid var(--border);
       background: #fff;
+      min-height: 36px;
+      width: 100%;
+      touch-action: manipulation;
     }
     .empty {
       color: var(--muted);
@@ -151,11 +207,13 @@
     .workspace-toggle {
       background: none;
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 2px 10px;
-      font-size: 12px;
+      border-radius: 8px;
+      padding: 6px 16px;
+      font-size: 14px;
       cursor: pointer;
       color: var(--text);
+      min-height: 36px;
+      touch-action: manipulation;
     }
     .workspace-drawer-body {
       flex: 1 1 auto;
@@ -203,6 +261,22 @@
       .workspace-drawer-body {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+      main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        gap: 8px;
+        padding: 8px;
+        overflow-y: visible;
+      }
+      html, body {
+        overflow-y: auto;
+      }
+      h1 { font-size: 16px; }
+      .panel h2 { font-size: 14px; }
+      .ticket .title { font-size: 13px; }
+      .ticket .summary { font-size: 12px; }
+      .metric .value { font-size: 15px; }
+      .score { font-size: 24px; }
     }
     @media (max-width: 420px) {
       .workspace-drawer.expanded {
@@ -211,6 +285,13 @@
       .workspace-drawer-body {
         grid-template-columns: 1fr;
       }
+      main {
+        gap: 6px;
+        padding: 6px;
+      }
+      .panel {
+        padding: 8px;
+      }
     }
   </style>
 </head>
@@ -218,6 +299,13 @@
   <header>
     <h1>Chairman Desktop</h1>
     <p class="subtitle">公司視圖 · 晨間快速掌握組織脈動</p>
+    <div class="notification-bar">
+      <span class="connection-dot" id="connection-dot" title="系統連線狀態"></span>
+      <span class="cos-status" id="cos-status" title="CoS 持續營運狀態">CoS：--</span>
+      <button id="btn-notify-enable">開啟通知</button>
+      <button id="btn-notify-disable">關閉通知</button>
+      <span class="status" id="notify-status">狀態：checking</span>
+    </div>
   </header>
 
   <main>
@@ -247,6 +335,7 @@
     <section class="panel" id="panel-brief">
       <h2>晨間執行摘要</h2>
       <div class="content" id="brief-container"></div>
+      <div style="margin-top:6px;font-size:11px;color:var(--muted);" id="brief-update-info"></div>
       <div id="brief-error" class="error-banner" style="display:none;"></div>
     </section>
 
@@ -286,10 +375,39 @@
         const text = await res.text().catch(() => "");
         throw new Error(`讀取失敗 (${res.status}): ${text || res.statusText}`);
       }
+      setConnectionStatus(true);
       return res.json();
     }
 
     function el(id) { return document.getElementById(id); }
+
+    function setConnectionStatus(ok) {
+      const dot = el("connection-dot");
+      if (!dot) return;
+      dot.classList.toggle("offline", !ok);
+    }
+
+    function renderAiTeamStatus(containerId, data) {
+      const container = el(containerId);
+      if (!container) return;
+      container.innerHTML = "";
+      const tasks = data.tasks || [];
+      if (!tasks.length) {
+        container.innerHTML = '<div class="empty">目前無進行中任務。</div>';
+        return;
+      }
+      tasks.forEach((task) => {
+        const div = document.createElement("div");
+        div.className = "item";
+        const statusColor = task.status === "執行中"
+          ? "var(--success)"
+          : task.status === "被阻擋"
+            ? "var(--danger)"
+            : "var(--muted)";
+        div.innerHTML = `<strong>${task.title || task.task_id}</strong> · <span style="color:${statusColor}">${task.status}</span> · ${task.source || ""}`;
+        container.appendChild(div);
+      });
+    }
 
     function showError(id, message) {
       const banner = el(id);
@@ -302,6 +420,21 @@
     function hideError(id) {
       const banner = el(id);
       if (banner) banner.style.display = "none";
+    }
+
+    const FRIENDLY_SUB_CATEGORY = {
+      runway: "現金流",
+      burn: "月燒率",
+      mrr: "月收入",
+      nrr: "留存率",
+      market_news: "市場動態",
+      department_health: "部門健康度",
+      department_health_overall: "整體健康度",
+      human_decision_pending: "待決策",
+    };
+    function friendlySubCategory(value) {
+      if (!value) return "";
+      return FRIENDLY_SUB_CATEGORY[value] || "";
     }
 
     function renderCompanyHealth(data) {
@@ -322,7 +455,9 @@
           const div = document.createElement("div");
           div.className = "ticket";
           const depts = (item.related_departments && item.related_departments[0]) || "";
-          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${depts} · ${item.sub_category} · ${new Date(item.as_of).toLocaleDateString("zh-TW")}</div><div class="summary">${item.summary || ""}</div>`;
+          const sub = friendlySubCategory(item.sub_category);
+          const metaParts = [depts, sub].filter(Boolean);
+          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${metaParts.join(" · ")} · ${new Date(item.as_of).toLocaleDateString("zh-TW")}</div><div class="summary">${item.summary || ""}</div>`;
           container.appendChild(div);
         }
       } catch (e) {
@@ -343,7 +478,7 @@
         for (const item of list) {
           const div = document.createElement("div");
           div.className = "ticket";
-          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${item.source_system} · ${new Date(item.as_of).toLocaleDateString("zh-TW")} · 可信度 ${Math.round((item.confidence || 0) * 100)}%</div><div class="summary">${item.summary || ""}</div>`;
+          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${new Date(item.as_of).toLocaleDateString("zh-TW")} · 可信度 ${Math.round((item.confidence || 0) * 100)}%</div><div class="summary">${item.summary || ""}</div>`;
           container.appendChild(div);
         }
       } catch (e) {
@@ -360,7 +495,7 @@
         scoreEl.className = "score " + (overall >= 80 ? "good" : overall >= 70 ? "warn" : "bad");
         const container = el("dept-dimensions");
         container.innerHTML = "";
-        const dims = data.dimensions || {};
+        const dims = data.signals || {};
         const labels = {
           velocity: "交付速度",
           quality: "品質",
@@ -369,11 +504,11 @@
           capacity: "人力容量",
         };
         Object.entries(dims).forEach(([key, dim]) => {
-          const score = Number(dim.score ?? 0);
+          const score = Number(dim.value || dim.score || 0);
           const color = score >= 80 ? "var(--success)" : score >= 70 ? "var(--warning)" : "var(--danger)";
           const div = document.createElement("div");
           div.className = "metric";
-          div.innerHTML = `<div><div class="label">${labels[key] || key}</div><div class="summary">${dim.narrative || ""}</div></div><div class="value" style="color:${color}">${score.toFixed(0)} 分</div>`;
+          div.innerHTML = `<div><div class="label">${labels[key] || key}</div><div class="summary">${dim.summary || dim.narrative || ""}</div></div><div class="value" style="color:${color}">${score.toFixed(0)} 分</div>`;
           container.appendChild(div);
         });
         if (!Object.keys(dims).length) {
@@ -398,11 +533,49 @@
           const div = document.createElement("div");
           div.className = "ticket";
           const depts = (item.related_departments && item.related_departments[0]) || "";
-          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${depts} · ${item.sub_category} · ${new Date(item.as_of).toLocaleString("zh-TW")}</div><div class="summary">${item.summary || ""}</div>`;
+          const sub = friendlySubCategory(item.sub_category);
+          const metaParts = [depts, sub].filter(Boolean);
+          div.innerHTML = `<div class="title">${item.title}</div><div class="meta">${metaParts.join(" · ")} · ${new Date(item.as_of).toLocaleString("zh-TW")}</div><div class="summary">${item.summary || ""}</div>`;
           container.appendChild(div);
         }
       } catch (e) {
         showError("decision-error", "顯示決策待辦時發生錯誤。");
+      }
+    }
+
+    function updateCosBadge(data) {
+      const badge = el("cos-status");
+      if (!badge) return;
+      const op = data.operational_status || "unknown";
+      const labels = {
+        idle: "待機",
+        running: "執行中",
+        blocked: "阻塞",
+        waiting_founder: "待決策",
+        error: "錯誤",
+      };
+      const label = labels[op] || op;
+      const reason = data.idle_reason || "";
+      badge.textContent = `CoS：${label}${reason ? " · " + reason : ""}`;
+      badge.className = "cos-status " + op;
+      if (op === "error" || op === "blocked" || op === "waiting_founder") {
+        badge.style.fontWeight = "700";
+      } else {
+        badge.style.fontWeight = "400";
+      }
+    }
+
+    async function loadCosStatus() {
+      try {
+        const data = await load(`${API_BASE}/cos-status`);
+        updateCosBadge(data);
+      } catch (err) {
+        console.error("CoS status load failed", err);
+        const badge = el("cos-status");
+        if (badge) {
+          badge.textContent = "CoS：連線失敗";
+          badge.className = "cos-status error";
+        }
       }
     }
 
@@ -415,11 +588,16 @@
         if (data.department_health) {
           renderDepartment(data.department_health);
         }
+        const briefInfo = el("brief-update-info");
+        if (briefInfo) {
+          const ts = data.last_brief_update ? new Date(data.last_brief_update).toLocaleString("zh-TW") : "";
+          briefInfo.textContent = ts ? `即時更新入口 · 最後更新：${ts}` : "即時更新入口";
+        }
       } catch (err) {
         console.error(err);
-        showError("company-error", "目前無法載入資料，請確認後台服務已啟動，或稍後再試。");
-        showError("brief-error", "目前無法載入資料，請稍後再試。");
-        showError("decision-error", "目前無法載入資料，請稍後再試。");
+        showError("company-error", "系統暫時忙碌，請稍後再試。");
+        showError("brief-error", "摘要暫時無法顯示，請稍候再試。");
+        showError("decision-error", "決策待辦暫時無法顯示，請稍候再試。");
       }
     }
 
@@ -430,25 +608,64 @@
         renderDepartment(data);
       } catch (err) {
         console.error(err);
-        showError("dept-error", "目前無法載入部門資料，請稍後再試。");
+        showError("dept-error", "部門資料暫時無法顯示，請稍後再試。");
       }
     }
 
     el("dept-select").addEventListener("change", loadDepartment);
+  </script>
 
-    // Workspace Drawer
-    let workspaceLoaded = false;
-    const workspaceDrawer = el("workspace-drawer");
-    const workspaceBtn = el("workspace-btn");
-    workspaceDrawer.querySelector(".workspace-drawer-header").addEventListener("click", () => {
-      workspaceDrawer.classList.toggle("expanded");
-      workspaceBtn.textContent = workspaceDrawer.classList.contains("expanded") ? "收合" : "展開";
-      if (!workspaceLoaded && workspaceDrawer.classList.contains("expanded")) {
-        workspaceLoaded = true;
-        loadWorkspace();
-      }
-    });
+  <!-- Workspace Drawer -->
+  <div class="workspace-drawer" id="workspace-drawer">
+    <div class="workspace-drawer-header" id="workspace-toggle">
+      <h2>Workspace</h2>
+      <button class="workspace-toggle" id="workspace-btn">展開</button>
+    </div>
+    <div class="workspace-drawer-body" id="workspace-body">
+      <div class="workspace-card">
+        <h3>進行中專案</h3>
+        <div class="items" id="ws-projects"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>進行中流程</h3>
+        <div class="items" id="ws-workflows"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>系統執行記錄</h3>
+        <div class="items" id="ws-runs"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>任務待辦</h3>
+        <div class="items" id="ws-scheduler"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>Founder Inbox</h3>
+        <div class="items" id="ws-inbox"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>待審批</h3>
+        <div class="items" id="ws-approvals"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>可靠性狀態</h3>
+        <div class="items" id="ws-reliability"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>套件時程</h3>
+        <div class="items" id="ws-packages"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>AI Team Status</h3>
+        <div class="items" id="ws-ai-team"><div class="empty">載入中...</div></div>
+      </div>
+      <div class="workspace-card">
+        <h3>CoS 持續營運</h3>
+        <div class="items" id="ws-cos-status"><div class="empty">載入中...</div></div>
+      </div>
+    </div>
+  </div>
 
+  <script>
     function renderList(containerId, items, formatter) {
       const container = el(containerId);
       if (!container) return;
@@ -465,23 +682,143 @@
       });
     }
 
+    function renderReliability(containerId, data) {
+      const container = el(containerId);
+      if (!container) return;
+      container.innerHTML = "";
+      const counts = data.counts || {};
+      const parts = [];
+      parts.push(`進行中：${counts.running || 0}`);
+      parts.push(`完成：${counts.completed || 0}`);
+      parts.push(`失敗：${counts.failed || 0}`);
+      parts.push(`遺失：${counts.lost || 0}`);
+      parts.push(`恢復中：${counts.recovering || 0}`);
+      parts.push(`待決策：${counts.needs_founder_decision || 0}`);
+      const summary = document.createElement("div");
+      summary.className = "item";
+      summary.style.fontWeight = "600";
+      summary.textContent = parts.join(" ｜ ");
+      container.appendChild(summary);
+
+      const abnormal = data.recent_abnormal || [];
+      abnormal.slice(0, 5).forEach((run) => {
+        const div = document.createElement("div");
+        div.className = "item";
+        const project = run.project_name || run.project_code || "";
+        const metaParts = [project, run.task_name].filter(Boolean);
+        div.innerHTML = `<strong>${run.run_id}</strong> · ${metaParts.join(" / ")} · <span style="color:var(--danger)">${run.recovery_status}</span> · 下一步：${run.next_action || "待釐清"}`;
+        container.appendChild(div);
+      });
+
+      const tickets = data.founder_tickets || [];
+      tickets.slice(0, 3).forEach((ticket) => {
+        const div = document.createElement("div");
+        div.className = "item";
+        const project = ticket.project_name || ticket.project_code || "";
+        div.innerHTML = `<strong>需您決定：${ticket.run_id}</strong> · ${project}／${ticket.task_name}<br/>原因：${ticket.reason}（已重試 ${ticket.retry_count} 次）`;
+        container.appendChild(div);
+      });
+
+      if (!abnormal.length && !tickets.length) {
+        container.innerHTML += '<div class="empty">目前無異常。</div>';
+      }
+    }
+
+    function renderApprovals(containerId, data) {
+      const container = el(containerId);
+      if (!container) return;
+      container.innerHTML = "";
+      const runs = (data.waiting_for_approval_runs || []).slice(0, 6);
+      if (!runs.length && !(data.pending_approvals || []).length) {
+        container.innerHTML = '<div class="empty">目前無待審批事項。</div>';
+        return;
+      }
+      runs.forEach((run) => {
+        const div = document.createElement("div");
+        div.className = "item";
+        const metaParts = [run.project_name || run.project_code, run.task_name].filter(Boolean);
+        const reason = run.reason || "等待主席審批";
+        div.innerHTML = `
+          <div><strong>${run.run_id}</strong> · ${metaParts.join(" / ")} · <span style="color:var(--warning)">${run.status}</span></div>
+          <div style="color:var(--muted);font-size:10px;margin-top:2px;">原因：${reason}</div>
+          <div style="margin-top:4px;">
+            <button class="btn-approve" data-run="${run.run_id}" style="font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--success);background:#fff;color:var(--success);cursor:pointer;">批准</button>
+            <button class="btn-reject" data-run="${run.run_id}" style="font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--danger);background:#fff;color:var(--danger);cursor:pointer;">駁回</button>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+
+      container.querySelectorAll(".btn-approve").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const runId = btn.getAttribute("data-run");
+          if (!runId) return;
+          btn.disabled = true;
+          btn.textContent = "處理中...";
+          try {
+            const res = await fetch(`/v1/runs/${encodeURIComponent(runId)}/approve`, {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({}),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            btn.textContent = `已批准 (${json.approved_count || 0})`;
+            setTimeout(() => loadWorkspace(), 800);
+          } catch (e) {
+            btn.textContent = "批准失敗";
+            btn.disabled = false;
+          }
+        });
+      });
+
+      container.querySelectorAll(".btn-reject").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const runId = btn.getAttribute("data-run");
+          if (!runId) return;
+          if (!confirm("確定要駁回此執行嗎？")) return;
+          btn.disabled = true;
+          btn.textContent = "處理中...";
+          try {
+            const res = await fetch(`/v1/runs/${encodeURIComponent(runId)}/reject`, {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({}),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            btn.textContent = `已駁回 (${json.rejected_count || 0})`;
+            setTimeout(() => loadWorkspace(), 800);
+          } catch (e) {
+            btn.textContent = "駁回失敗";
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
     async function loadWorkspace() {
       const endpoints = {
         "ws-projects": "/api/v1/command-center/projects",
         "ws-workflows": "/api/v1/command-center/workflows",
         "ws-runs": "/api/v1/command-center/runs",
+        "ws-reliability": "/api/v1/command-center/reliability",
         "ws-scheduler": "/api/v1/command-center/scheduler",
         "ws-inbox": "/api/v1/command-center/inbox",
         "ws-packages": "/api/v1/command-center/packages",
+        "ws-approvals": "/api/v1/command-center/approvals",
+        "ws-ai-team": "/api/v1/command-center/ai-team-status",
+        "ws-cos-status": "/api/v1/command-center/cos-status",
       };
       for (const [container, path] of Object.entries(endpoints)) {
         try {
           const data = await load(path);
           switch (container) {
             case "ws-projects":
-              renderList(container, (data.contracts || []).slice(0, 6), (c) =>
-                `<strong>${c.slug || c.id}</strong> · ${c.status || "draft"}`
-              );
+              renderList(container, (data.contracts || []).slice(0, 6), (c) => {
+                const lastUpdate = c.last_ai_update ? ` · Last AI Update：${new Date(c.last_ai_update).toLocaleString("zh-TW")}` : "";
+                return `<strong>${c.slug || c.id}</strong> · ${c.status || "draft"}${lastUpdate}`;
+              });
               break;
             case "ws-workflows":
               renderList(container, data.workflows || [], (w) =>
@@ -498,6 +835,9 @@
                 return `${r.run_id} · <span style="color:${color}">${r.status}</span>`;
               });
               break;
+            case "ws-reliability":
+              renderReliability(container, data);
+              break;
             case "ws-scheduler": {
               const all = [
                 ...(data.executable || []),
@@ -511,58 +851,288 @@
               break;
             }
             case "ws-inbox":
-              renderList(container, data.tickets || [], (t) =>
-                `${t.title} · ${t.department || ""} · ${t.status || ""}`
-              );
+              renderList(container, data.tickets || [], (t) => {
+                const parts = [t.title, t.department || "", t.status || ""];
+                if (t.submitter) parts.push(`提出者：${t.submitter}`);
+                if (t.estimated_processing_time) parts.push(`預計：${t.estimated_processing_time}`);
+                return parts.filter(Boolean).join(" · ");
+              });
+              break;
+            case "ws-approvals":
+              renderApprovals(container, data);
               break;
             case "ws-packages":
               renderList(container, data.packages || [], (p) =>
                 `<strong>${p.package_id}</strong> · ${p.package_type} · ${p.topic || ""}`
               );
               break;
+            case "ws-ai-team":
+              renderAiTeamStatus(container, data);
+              break;
+            case "ws-cos-status": {
+              const list = data.last_report ? [data.last_report] : [];
+              renderList(container, list, (r) => {
+                const op = r.operational_status || data.operational_status || "unknown";
+                const reason = r.idle_reason || data.idle_reason || "";
+                return `<strong>${op}</strong>${reason ? "：<small>" + reason + "</small>" : ""}`;
+              });
+              break;
+            }
           }
         } catch (err) {
+          setConnectionStatus(false);
           const container = el(container);
-          if (container) container.innerHTML = '<div class="empty">讀取失敗。</div>';
+          if (container) container.innerHTML = '<div class="empty">載入失敗，請稍後再試。</div>';
         }
       }
     }
 
     loadOverview();
+    loadCosStatus();
+
+    // Workspace Drawer
+    let workspaceLoaded = false;
+    const workspaceDrawer = el("workspace-drawer");
+    const workspaceBtn = el("workspace-btn");
+    workspaceDrawer.querySelector(".workspace-drawer-header").addEventListener("click", () => {
+      workspaceDrawer.classList.toggle("expanded");
+      workspaceBtn.textContent = workspaceDrawer.classList.contains("expanded") ? "收合" : "展開";
+      if (!workspaceLoaded && workspaceDrawer.classList.contains("expanded")) {
+        workspaceLoaded = true;
+        loadWorkspace();
+      }
+    });
   </script>
 
-  <!-- Workspace Drawer -->
-  <div class="workspace-drawer" id="workspace-drawer">
-    <div class="workspace-drawer-header" id="workspace-toggle">
-      <h2>Workspace</h2>
-      <button class="workspace-toggle" id="workspace-btn">展開</button>
-    </div>
-    <div class="workspace-drawer-body" id="workspace-body">
-      <div class="workspace-card">
-        <h3>Active Projects</h3>
-        <div class="items" id="ws-projects"><div class="empty">載入中...</div></div>
-      </div>
-      <div class="workspace-card">
-        <h3>Active Workflows</h3>
-        <div class="items" id="ws-workflows"><div class="empty">載入中...</div></div>
-      </div>
-      <div class="workspace-card">
-        <h3>Hermes Runs Mirror</h3>
-        <div class="items" id="ws-runs"><div class="empty">載入中...</div></div>
-      </div>
-      <div class="workspace-card">
-        <h3>Auto Scheduler</h3>
-        <div class="items" id="ws-scheduler"><div class="empty">載入中...</div></div>
-      </div>
-      <div class="workspace-card">
-        <h3>Founder Inbox</h3>
-        <div class="items" id="ws-inbox"><div class="empty">載入中...</div></div>
-      </div>
-      <div class="workspace-card">
-        <h3>Package Timeline</h3>
-        <div class="items" id="ws-packages"><div class="empty">載入中...</div></div>
-      </div>
-    </div>
-  </div>
+  <!-- PWA + Notifications -->
+  <script>
+    const CCNotify = (() => {
+      const POLL_INTERVAL = 30000;
+      const STORAGE_KEY = "cc-notify-state-v1";
+      let timer = null;
+
+      function prevState() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch { return {}; }
+      }
+      function saveState(state) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+      }
+
+      function setStatus(text) {
+        const s = el("notify-status");
+        if (s) s.textContent = text;
+      }
+
+      function showToast(message) {
+        let toast = el("cc-toast");
+        if (!toast) {
+          toast = document.createElement("div");
+          toast.id = "cc-toast";
+          toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1d1d1f;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;";
+          document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.style.opacity = "1";
+        clearTimeout(toast._t);
+        toast._t = setTimeout(() => { toast.style.opacity = "0"; }, 4000);
+      }
+
+      async function sendNotify(title, opts) {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            const n = new Notification(title, opts);
+            n.onclick = () => {
+              window.focus();
+              n.close();
+              const section = (opts && opts.data && opts.data.section) || null;
+              if (section) scrollToSection(section);
+            };
+            return;
+          } catch {}
+        }
+        showToast(title);
+      }
+
+      function scrollToSection(section) {
+        const drawer = el("workspace-drawer");
+        const map = { runs: "ws-runs", inbox: "ws-inbox", scheduler: "ws-scheduler" };
+        const targetId = map[section];
+        if (!targetId) return;
+        if (drawer && !drawer.classList.contains("expanded")) {
+          drawer.classList.add("expanded");
+          el("workspace-btn").textContent = "收合";
+        }
+        setTimeout(() => {
+          const node = el(targetId);
+          if (node) {
+            node.scrollIntoView({ behavior: "smooth", block: "center" });
+            node.style.transition = "background .6s";
+            const prev = node.style.background;
+            node.style.background = "#fff8e1";
+            setTimeout(() => { node.style.background = prev; }, 2000);
+          }
+        }, 350);
+      }
+
+      async function poll() {
+        try {
+          const [runsRes, inboxRes, schedRes] = await Promise.all([
+            fetch("/api/v1/command-center/runs"),
+            fetch("/api/v1/command-center/inbox"),
+            fetch("/api/v1/command-center/scheduler"),
+          ]);
+          const runs = await runsRes.json().catch(() => ({}));
+          const inbox = await inboxRes.json().catch(() => ({}));
+          const sched = await schedRes.json().catch(() => ({}));
+
+          const prev = prevState();
+          const updates = [];
+
+          // Runs
+          const currentRuns = (runs.runs || []).slice(0, 20);
+          const prevRuns = prev.runs || {};
+          for (const r of currentRuns) {
+            const old = prevRuns[r.run_id];
+            if (!old) {
+              if (r.status === "completed" || r.status === "failed") {
+                updates.push({ section: "runs", title: `執行記錄 ${r.run_id}`, body: `狀態：${r.status}` });
+              }
+            } else if (old.status !== r.status) {
+              if (r.status === "completed" || r.status === "failed") {
+                updates.push({ section: "runs", title: `執行記錄 ${r.run_id}`, body: `狀態變更：${old.status} → ${r.status}` });
+              }
+            }
+            prevRuns[r.run_id] = { status: r.status, updated_at: r.updated_at };
+          }
+
+          // Inbox pending count
+          const inboxPending = (inbox.tickets || []).filter(t => t.status === "PENDING").length;
+          const prevInboxPending = typeof prev.inboxPending === "number" ? prev.inboxPending : 0;
+          if (inboxPending > prevInboxPending) {
+            updates.push({ section: "inbox", title: "Founder Inbox", body: `新增 ${inboxPending - prevInboxPending} 件待決策事項` });
+          }
+
+          // Scheduler founder decisions / waiting_founder
+          const founderItems = [
+            ...(sched.waiting_founder || []),
+            ...(sched.founder_decisions || []),
+          ];
+          const prevFounderCount = typeof prev.founderDecisionCount === "number" ? prev.founderDecisionCount : 0;
+          if (founderItems.length > prevFounderCount) {
+            updates.push({ section: "scheduler", title: "任務待辦", body: `新增 ${founderItems.length - prevFounderCount} 件待決策` });
+          }
+
+          // Persist
+          prev.runs = prevRuns;
+          prev.inboxPending = inboxPending;
+          prev.founderDecisionCount = founderItems.length;
+          saveState(prev);
+
+          for (const u of updates) {
+            await sendNotify(u.title, {
+              body: u.body,
+              icon: "/icon.svg",
+              data: { section: u.section },
+              requireInteraction: false,
+            });
+          }
+        } catch {}
+      }
+
+      async function requestPermission() {
+        if (!('Notification' in window)) {
+          setStatus("不支援");
+          showToast("您的瀏覽器不支援瀏覽器通知，已改用站內提醒。");
+          return false;
+        }
+        if (Notification.permission === "granted") {
+          setStatus("已開啟");
+          return true;
+        }
+        if (Notification.permission === "denied") {
+          setStatus("已封鎖");
+          showToast("通知權限已被拒絕，請至瀏覽器設定重新允許。");
+          return false;
+        }
+        try {
+          const result = await Notification.requestPermission();
+          if (result === "granted") {
+            setStatus("已開啟");
+            showToast("通知已開啟，任務狀態變更時會提醒您。");
+            return true;
+          }
+          setStatus("未取得");
+          showToast("通知權限未取得，將使用站內提醒。");
+          return false;
+        } catch {
+          setStatus("失敗");
+          return false;
+        }
+      }
+
+      function disable() {
+        stop();
+        setStatus("已關閉");
+        showToast("通知輪詢已停止。");
+      }
+
+      function start() {
+        if (timer) return;
+        timer = setInterval(poll, POLL_INTERVAL);
+        poll();
+        setStatus("監控中");
+      }
+
+      function stop() {
+        clearInterval(timer);
+        timer = null;
+        setStatus("已停止");
+      }
+
+      // Listen for messages from sw.js notification click
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data && event.data.type === 'CC_NOTIFICATION_CLICK' && event.data.section) {
+            scrollToSection(event.data.section);
+          }
+        });
+      }
+
+      function init() {
+        const btnEnable = el("btn-notify-enable");
+        const btnDisable = el("btn-notify-disable");
+        if (btnEnable) btnEnable.addEventListener("click", async () => {
+          const ok = await requestPermission();
+          if (ok) start();
+        });
+        if (btnDisable) btnDisable.addEventListener("click", () => disable());
+
+        // Auto-start if already granted and page visibility permits
+        if ('Notification' in window && Notification.permission === 'granted') {
+          setStatus("已開啟");
+          start();
+        } else {
+          setStatus("待開啟");
+        }
+      }
+
+      return { init, start, stop, requestPermission };
+    })();
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => CCNotify.init());
+    } else {
+      CCNotify.init();
+    }
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {
+          // Service worker registration may fail on HTTP without HTTPS
+        });
+      });
+    }
+  </script>
 </body>
 </html>

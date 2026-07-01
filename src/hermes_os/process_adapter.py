@@ -13,7 +13,9 @@ from hermes_os.types import WorkforceItem
 from hermes_os.workflow_records import WorkflowRecords
 from hermes_os.approval_records import ApprovalRecords
 from hermes_os.run_params_records import RunParamsRecords
-
+from hermes_os.run_journal import RunJournal
+from hermes_os.run_registry import RunRegistry
+from hermes_os.run_journal_jsonl import JsonlRunJournal
 
 class _ShutdownRequested(Exception):
     pass
@@ -38,6 +40,7 @@ class ProcessAdapter:
         workflow_records: Optional["WorkflowRecords"] = None,
         approval_records: Optional["ApprovalRecords"] = None,
         run_params_records: Optional["RunParamsRecords"] = None,
+        journal: Optional[RunJournal] = None,
     ) -> None:
         self.queue = WorkforceQueue()
         self.memory = OperationalMemoryLog()
@@ -58,6 +61,9 @@ class ProcessAdapter:
         self.workflow_records = workflow_records
         self.approval_records = approval_records
         self.run_params_records = run_params_records
+        self._journal = journal or RunJournal()
+        self._run_registry_sqlite: RunRegistry = RunRegistry()
+        self._journal_jsonl: JsonlRunJournal = JsonlRunJournal()
         self._params_registry: Dict[str, Dict[str, Any]] = {}
         self._shutdown_requested = False
         self._draining = False
@@ -123,7 +129,7 @@ class ProcessAdapter:
             "workflow_id": item.get("workflow_id"),
             "step_id": item.get("step_id"),
             "approval_status": item.get("approval_status"),
-            "run_id": item.get("run_id"),
+            "run_id": item.get("run_id") or workforce_item.item_id,
             "retry_count": 0,
             "status": "queued",
             "status_updated_at": created_at.isoformat(),
@@ -150,10 +156,35 @@ class ProcessAdapter:
             )
             run_meta["item_count"] += 1
             run_meta["updated_at"] = created_at.isoformat()
+            input_payload = item.get("payload") or item.get("params") or item.get("input")
+            self._run_registry_sqlite.upsert(
+                run_id=run_id,
+                status="queued",
+                created_at=created_at,
+                task_name=item.get("title") or workforce_item.item_id,
+                input_json=input_payload if isinstance(input_payload, dict) else {"raw": input_payload},
+            )
+            self._journal_jsonl.append(
+                run_id=run_id,
+                status="queued",
+                occurred_at=created_at,
+                event="submitted",
+                task_name=item.get("title") or workforce_item.item_id,
+            )
+        journal_run_id = run_id or workforce_item.item_id
+        journal_task_name = item.get("title") or workforce_item.item_id
+        self._journal.append(
+            run_id=journal_run_id,
+            task_name=journal_task_name,
+            status="queued",
+            last_event="submitted",
+            project_code=item.get("project_code"),
+            project_name=item.get("project_name"),
+        )
         entry = {"workforce_item_id": workforce_item.item_id, "group_id": item.get("group_id")}
-        self._publish("submitted", entry)
         return {
             **entry,
+            "run_id": run_id or workforce_item.item_id,
             "status": "queued",
             "priority": workforce_item.priority,
             "retry_count": 0,
@@ -164,6 +195,9 @@ class ProcessAdapter:
 
     def batch_submit(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [self.submit(item) for item in items]
+
+    def createRun(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        return self.submit(item)
 
     def _expire_if_timed_out(self, item_id: str) -> bool:
         if self.execution_timeout_seconds is None:
@@ -510,6 +544,38 @@ class ProcessAdapter:
         payload = {"run_id": run_id, "status": status}
         self._publish("run_updated", payload)
         return {**payload, "updated_at": run_meta["updated_at"]}
+
+    def waitRun(self, item_id: str) -> Dict[str, Any]:
+        entry = self._run_registry.get(item_id)
+        if entry is not None:
+            return {
+                "workforce_item_id": item_id,
+                "status": entry.get("status"),
+                "updated_at": entry.get("status_updated_at") or entry.get("updated_at"),
+                "found_in": "registry",
+            }
+        registry_record = self._run_registry_sqlite.get(item_id)
+        if registry_record:
+            return {
+                "workforce_item_id": item_id,
+                "status": registry_record.get("status"),
+                "updated_at": registry_record.get("updated_at"),
+                "found_in": "sqlite_registry",
+            }
+        jsonl_latest = self._journal_jsonl.latest(item_id)
+        if jsonl_latest is not None:
+            return {
+                "workforce_item_id": item_id,
+                "status": jsonl_latest.get("status"),
+                "updated_at": jsonl_latest.get("occurred_at"),
+                "found_in": "jsonl_journal",
+                "last_event": jsonl_latest.get("event"),
+            }
+        return {
+            "workforce_item_id": item_id,
+            "status": "run_not_found",
+            "found_in": "none",
+        }
 
     @staticmethod
     def _params_fingerprint(params: Optional[Dict[str, Any]]) -> Optional[str]:

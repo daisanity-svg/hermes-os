@@ -28,12 +28,20 @@ class MetricsBridge:
     def to_json(self) -> Dict[str, Any]:
         snap = self.store.latest()
         if snap is None:
-            return {"status": "unavailable"}
+            return {
+                "schema_version": "cos-runtime/status/v1",
+                "status": "unavailable",
+            }
         return {
+            "schema_version": "cos-runtime/status/v1",
             "status": "ok",
-            "active_runs": snap.active_runs,
-            "queued_items": snap.queued_items,
-            "failed_items": snap.failed_items,
-            "health_status": snap.health_status,
-            "metrics": snap.metrics,
+            "snapshot": {
+                "snapshot_id": snap.snapshot_id,
+                "captured_at": snap.captured_at.isoformat() if hasattr(snap.captured_at, "isoformat") else str(snap.captured_at),
+                "active_runs": snap.active_runs,
+                "queued_items": snap.queued_items,
+                "failed_items": snap.failed_items,
+                "health_status": snap.health_status,
+                "metrics": snap.metrics,
+            },
         }

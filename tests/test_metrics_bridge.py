@@ -19,9 +19,10 @@ def test_to_json_returns_status_block() -> None:
     store.capture(active_runs=0, queued_items=0, health_status="healthy")
     payload = MetricsBridge(store).to_json()
     assert payload["status"] == "ok"
-    assert payload["active_runs"] == 0
+    assert payload["schema_version"] == "cos-runtime/status/v1"
+    assert payload["snapshot"]["active_runs"] == 0
 
 
 def test_to_json_when_empty_returns_unavailable() -> None:
     payload = MetricsBridge().to_json()
-    assert payload == {"status": "unavailable"}
+    assert payload == {"schema_version": "cos-runtime/status/v1", "status": "unavailable"}

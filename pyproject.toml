@@ -7,8 +7,21 @@ name = "hermes-os"
 version = "0.1.0"
 description = "Hermes OS — next-generation Agent Organization Runtime (v0.1 MVP)."
 readme = "README.md"
-requires-python = ">=3.11"
 license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Hermes OS contributors" },
+]
+keywords = ["agent", "runtime", "orchestration", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -24,6 +37,15 @@ bench = [
     "pytest>=8",
     "pytest-benchmark>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/your-org/hermes-os"
+Documentation = "https://github.com/your-org/hermes-os#readme"
+Repository = "https://github.com/your-org/hermes-os"
+Issues = "https://github.com/your-org/hermes-os/issues"
+
+[project.scripts]
+hermes-os = "hermes_os.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hermes_os"]

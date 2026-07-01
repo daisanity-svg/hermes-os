@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +28,8 @@ from hermes_os.org_learning.decision_queue import (
 )
 from hermes_os.scheduler.auto_scheduler import AutoScheduler
 from hermes_os.scheduler.schemas import SortedTaskQueue
+from hermes_os.run_journal import RunJournal
+from hermes_os.recovery import RecoveryManager
 from hermes_os.workflow_records import WorkflowRecords
 
 
@@ -36,11 +40,8 @@ class CommandCenterAdapter:
         self.registry = registry or SignalRegistry()
         self._register_default_providers()
         self._workflow_records = WorkflowRecords()
-        self._run_statuses: Dict[str, Dict[str, Any]] = {
-            "run-001": {"run_id": "run-001", "status": "running", "updated_at": "2026-06-25T14:00:00Z"},
-            "run-002": {"run_id": "run-002", "status": "completed", "updated_at": "2026-06-25T12:30:00Z"},
-            "run-003": {"run_id": "run-003", "status": "failed", "updated_at": "2026-06-25T10:15:00Z"},
-        }
+        self._journal = RunJournal()
+        self._recovery = RecoveryManager(journal=self._journal)
         self._inbox = HumanDecisionQueue()
         if not self._inbox.list_pending():
             self._inbox.enqueue(
@@ -50,6 +51,8 @@ class CommandCenterAdapter:
                     description="行銷部提案：將電視廣告預算轉為社群與差旅",
                     department="行銷",
                     status=DecisionStatus.PENDING,
+                    submitter="行銷部",
+                    estimated_processing_time="2 天",
                 )
             )
             self._inbox.enqueue(
@@ -59,6 +62,8 @@ class CommandCenterAdapter:
                     description="工程部與設計部對美術童書感程度有不同意見，需 Chairman 定調",
                     department="工程",
                     status=DecisionStatus.PENDING,
+                    submitter="工程部",
+                    estimated_processing_time="1 天",
                 )
             )
         # Seed a demo running workflow
@@ -134,15 +139,17 @@ class CommandCenterAdapter:
 
     def get_overview(self) -> Dict[str, Any]:
         """總覽：一次取回所有區塊資料。"""
+        brief = self.get_executive_brief()
         return {
-            "executive_brief": self.get_executive_brief(),
+            "executive_brief": brief,
+            "last_brief_update": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") if brief else None,
             "department_health": self.get_department_health(),
             "decision_queue": self.get_decision_queue_signals(),
             "company_health": self.get_company_health(),
         }
 
     def get_active_projects(self) -> Dict[str, Any]:
-        """Active Projects：讀取 project-status.yaml 與 contracts-index.yaml。"""
+        """Active Projects：讀取 project-status.yaml 與 contracts-index.yaml，並附上每筆合約的最後 AI 更新時間。"""
         repo = Path(__file__).resolve().parents[3]
         project_path = repo / "docs" / "sso" / "project-status.yaml"
         contracts_path = repo / "docs" / "sso" / "contracts-index.yaml"
@@ -156,10 +163,34 @@ class CommandCenterAdapter:
             contracts = AutoScheduler._load_simple_yaml(contracts_path)
         except Exception:
             pass
+
+        # 根據 run journal 計算每筆合約/專案的最後 AI 更新時間
+        enriched_contracts = []
+        for c in contracts.get("contracts", []):
+            item_id = c.get("slug") or c.get("id") or c.get("work_unit_id")
+            last_ai_update = self._last_ai_update_for(item_id)
+            enriched = dict(c)
+            enriched["last_ai_update"] = last_ai_update
+            enriched_contracts.append(enriched)
+
         return {
             "project": project,
-            "contracts": contracts.get("contracts", []),
+            "contracts": enriched_contracts,
         }
+
+    def _last_ai_update_for(self, item_id: Optional[str]) -> Optional[str]:
+        if not item_id:
+            return None
+        # 從 run journal 找出與此 item_id 相關的最新 run
+        journal = self._journal
+        matches = []
+        for entry in journal.list():
+            if entry.task_name == item_id or item_id in (entry.project_code or ""):
+                matches.append(entry)
+        if not matches:
+            return None
+        latest = max(matches, key=lambda e: e.updated_at)
+        return latest.updated_at.isoformat() if hasattr(latest.updated_at, "isoformat") else str(latest.updated_at)
 
     def get_active_workflows(self) -> Dict[str, Any]:
         """Active Workflows：目前執行中的 workflow 清單。"""
@@ -180,10 +211,71 @@ class CommandCenterAdapter:
 
     def get_runs_mirror(self) -> Dict[str, Any]:
         """Hermes Runs Mirror：目前與近期 run 狀態。"""
-        runs = list(self._run_statuses.values())
+        runs = [
+            {
+                "run_id": entry.run_id,
+                "status": entry.status,
+                "updated_at": entry.updated_at.isoformat() if hasattr(entry.updated_at, "isoformat") else str(entry.updated_at),
+            }
+            for entry in self._journal.list()
+        ]
         return {
             "count": len(runs),
             "runs": sorted(runs, key=lambda r: r.get("updated_at", ""), reverse=True),
+        }
+
+    def get_reliability_overview(self) -> Dict[str, Any]:
+        """Reliability Overview：讀取 RunJournal 與 RecoveryManager 狀態。"""
+        all_runs = self._journal.list()
+        recoverable = self._recovery.list_recoverable()
+
+        counts: Dict[str, int] = {
+            "running": 0,
+            "completed": 0,
+            "failed": 0,
+            "lost": 0,
+            "recovering": 0,
+            "needs_founder_decision": 0,
+        }
+        for entry in all_runs:
+            status = entry.status
+            if status in counts:
+                counts[status] += 1
+
+        recent_abnormal = []
+        for run in recoverable[:5]:
+            recent_abnormal.append(
+                {
+                    "run_id": run.run_id,
+                    "project_code": run.project_code,
+                    "project_name": run.project_name,
+                    "task_name": run.task_name,
+                    "status": run.current_status,
+                    "recovery_status": run.recovery_status.value if hasattr(run.recovery_status, "value") else str(run.recovery_status),
+                    "reason": run.reason,
+                    "next_action": run.reason,
+                    "updated_at": run.updated_at.isoformat() if hasattr(run.updated_at, "isoformat") else str(run.updated_at),
+                }
+            )
+
+        founder_tickets = []
+        for run in recoverable:
+            if (run.recovery_status.value if hasattr(run.recovery_status, "value") else str(run.recovery_status)) == "needs_founder_decision":
+                founder_tickets.append(
+                    {
+                        "run_id": run.run_id,
+                        "project_code": run.project_code,
+                        "project_name": run.project_name,
+                        "task_name": run.task_name,
+                        "reason": run.reason,
+                        "retry_count": run.retry_count,
+                    }
+                )
+
+        return {
+            "counts": counts,
+            "recent_abnormal": recent_abnormal,
+            "founder_tickets": founder_tickets,
         }
 
     def get_scheduler_queue(self) -> Dict[str, Any]:
@@ -214,6 +306,8 @@ class CommandCenterAdapter:
                     "created_at": t.created_at.isoformat()
                     if hasattr(t.created_at, "isoformat")
                     else str(t.created_at),
+                    "submitter": t.submitter,
+                    "estimated_processing_time": t.estimated_processing_time,
                 }
                 for t in pending
             ],
@@ -300,3 +394,178 @@ class CommandCenterAdapter:
             },
         }
         return defaults.get(department, defaults["engineering"])
+
+    def get_loop_status(self, loop: Any = None) -> Dict[str, Any]:
+        """Continuous Development Loop：狀態與進度。"""
+        if loop is None:
+            return {
+                "state": "idle",
+                "stop_reason": "none",
+                "current_task_id": None,
+                "in_progress": None,
+                "last_step": None,
+                "completed_count": 0,
+                "founder_tickets_count": 0,
+                "next_candidate": None,
+            }
+        return loop.status()
+
+    def get_loop_progress(self, loop: Any = None) -> Dict[str, Any]:
+        """Continuous Development Loop：Chairman 進度查詢。"""
+        if loop is None:
+            return {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "project_code": None,
+                "project_name": None,
+                "已完成": [],
+                "進行中": None,
+                "下一步": None,
+                "風險": [],
+                "需要_Founder_介入": [],
+            }
+        return loop.progress()
+
+    def get_ai_team_status(self) -> Dict[str, Any]:
+        """AI Team Status：目前任務（由排程佇列與執行記錄彙整）。"""
+        repo = Path(__file__).resolve().parents[3]
+        scheduler = AutoScheduler()
+        scheduler.reload(
+            project_status_path=repo / "docs" / "sso" / "project-status.yaml",
+            contracts_index_path=repo / "docs" / "sso" / "contracts-index.yaml",
+        )
+        queue = scheduler.propose()
+        runs = self._journal.list()
+
+        current_tasks = []
+        for candidate in queue.executable[:4]:
+            current_tasks.append({
+                "task_id": candidate.item_id,
+                "title": candidate.title or candidate.item_id,
+                "source": candidate.source,
+                "status": "待執行",
+                "priority": candidate.priority.value if hasattr(candidate.priority, "value") else str(candidate.priority),
+            })
+        for candidate in queue.blocked[:4]:
+            current_tasks.append({
+                "task_id": candidate.item_id,
+                "title": candidate.title or candidate.item_id,
+                "source": candidate.source,
+                "status": "被阻擋",
+                "priority": candidate.priority.value if hasattr(candidate.priority, "value") else str(candidate.priority),
+            })
+        # 也加入最近仍在進行中的 run
+        running_runs = [r for r in runs if r.status == "running"]
+        for run in running_runs[:3]:
+            current_tasks.append({
+                "task_id": run.run_id,
+                "title": run.task_name,
+                "source": run.project_code or "run_journal",
+                "status": "執行中",
+                "priority": "normal",
+            })
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "total_tasks": len(current_tasks),
+            "tasks": current_tasks,
+        }
+
+    def list_meetings(self, project_code: str = "", limit: int = 20) -> Dict[str, Any]:
+        """Meetings：列出 run journal 中以 meeting- 開頭的 run。"""
+        entries = self._journal.list(project_code=project_code or None, limit=limit)
+        meetings = []
+        for entry in entries:
+            task_name = entry.task_name or ""
+            if not task_name.startswith("meeting-"):
+                continue
+            meetings.append({
+                "run_id": entry.run_id,
+                "status": entry.status,
+                "task_name": task_name,
+                "updated_at": entry.updated_at.isoformat() if hasattr(entry.updated_at, "isoformat") else str(entry.updated_at),
+                "project_code": entry.project_code,
+                "project_name": entry.project_name,
+            })
+        return {"meetings": meetings, "count": len(meetings)}
+
+    def get_meeting(self, meeting_id: str) -> Dict[str, Any]:
+        """Meeting：取回單一 meeting run 的近期狀態。"""
+        entry = self._journal.get(meeting_id)
+        if entry is None:
+            return {"meeting_id": meeting_id, "status": "unknown"}
+        return {
+            "meeting_id": entry.run_id,
+            "status": entry.status,
+            "task_name": entry.task_name,
+            "updated_at": entry.updated_at.isoformat() if hasattr(entry.updated_at, "isoformat") else str(entry.updated_at),
+            "project_code": entry.project_code,
+            "project_name": entry.project_name,
+        }
+
+    def get_cos_status(self, rt=None) -> Dict[str, Any]:
+        """CoS 持續營運狀態：直接消費 CosRuntime 的 v1 envelope，不重建 raw dict。"""
+        from hermes_os.cos_runtime import CosRuntime
+
+        if rt is None:
+            rt = CosRuntime()
+        v1 = rt.status()
+        project = v1.get("project") or {}
+        project_code = project.get("code") or v1.get("project_code")
+        project_name = project.get("name") or v1.get("project_name")
+        cos_state = v1.get("cos_state") or v1.get("state")
+        op = v1.get("operational_status", "unknown")
+        idle_reason = v1.get("idle_reason")
+        loop = v1.get("loop") or {}
+        last_report = v1.get("last_report") or v1.get("report") or {}
+
+        next_up = last_report.get("next_up") or {}
+        next_suggestion = None
+        if op == "idle":
+            next_suggestion = idle_reason or "等待 Founder 下達新目標或手動触發 cycle"
+        elif op == "running":
+            next_suggestion = "正在執行任務，完成後自動驗收並接續下一項"
+        elif op == "waiting_founder":
+            next_suggestion = "等待 Founder 決策後再繼續"
+        elif op == "blocked":
+            next_suggestion = "系統阻塞，需 Founder 介入解除"
+        elif op == "error":
+            next_suggestion = "系統錯誤，需檢查 Run Journal 與 Recovery"
+
+        founder_tickets = last_report.get("founder_tickets", []) or []
+        needs_founder = bool(founder_tickets) or op == "waiting_founder"
+
+        heartbeat = None
+        heartbeat_path = Path(__file__).resolve().parents[3] / ".hermes" / "cos" / "heartbeat.json"
+        try:
+            if heartbeat_path.exists():
+                heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+        except Exception:
+            heartbeat = None
+
+        return {
+            "project_code": project_code,
+            "project_name": project_name,
+            "cos_state": cos_state,
+            "operational_status": op,
+            "idle_reason": idle_reason,
+            "next_suggestion": next_suggestion,
+            "needs_founder_intervention": needs_founder,
+            "loop_state": loop.get("state"),
+            "loop_stop_reason": loop.get("stop_reason"),
+            "last_report": last_report,
+            "heartbeat": heartbeat,
+        }
+
+    def get_cos_progress(self, rt=None) -> Dict[str, Any]:
+        """CoS Chairman Progress Report：直接讀取自 CosRuntime。"""
+        from hermes_os.cos_runtime import CosRuntime
+
+        if rt is None:
+            rt = CosRuntime()
+        return rt.progress()
+
+    def switch_project(self, rt=None, project_code=None, project_name=None) -> Dict[str, Any]:
+        from hermes_os.cos_runtime import CosRuntime
+
+        runtime = rt or CosRuntime()
+        return runtime.switch_project(project_code=project_code, project_name=project_name)

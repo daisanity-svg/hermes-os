@@ -31,6 +31,8 @@ class DecisionTicket:
     decided_at: Optional[datetime] = None
     decided_by: Optional[str] = None
     decision: Optional[str] = None
+    submitter: Optional[str] = None
+    estimated_processing_time: Optional[str] = None
 
 
 class HumanDecisionQueue:

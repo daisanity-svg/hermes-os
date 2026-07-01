@@ -209,16 +209,18 @@ class DepartmentHealthSignalProvider(AbstractSignalProvider):
         self,
         department: str,
         health: Optional[Dict[str, Any]] = None,
+        real_data_loader: Optional[Any] = None,
     ) -> None:
         super().__init__(provider_id=f"dept_health_{department}")
         self._department = department
         self._health = health or {}
+        self._real_data_loader = real_data_loader
 
-    def fetch_signals(self) -> List[BusinessSignal]:
+    def _build_signals_from_health(self, health: Dict[str, Any]) -> List[BusinessSignal]:
         results: List[BusinessSignal] = []
-        dimensions: Dict[str, Any] = self._health.get("dimensions", {})
-        overall = float(self._health.get("overall_score", 0.0))
-        as_of_raw = self._health.get("computed_at", datetime.utcnow().isoformat())
+        dimensions = health.get("dimensions", {})
+        overall = float(health.get("overall_score", 0.0))
+        as_of_raw = health.get("computed_at", datetime.utcnow().isoformat())
         if isinstance(as_of_raw, str):
             as_of = datetime.fromisoformat(as_of_raw)
         elif isinstance(as_of_raw, datetime):
@@ -279,6 +281,16 @@ class DepartmentHealthSignalProvider(AbstractSignalProvider):
                 )
             )
         return results
+
+    def fetch_signals(self) -> List[BusinessSignal]:
+        if self._real_data_loader is not None:
+            try:
+                real_health = self._real_data_loader(self._department)
+                if isinstance(real_health, dict):
+                    return self._build_signals_from_health(real_health)
+            except Exception:
+                pass
+        return self._build_signals_from_health(self._health)
 
 
 class OperationalRiskProvider(AbstractSignalProvider):

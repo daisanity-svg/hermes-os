@@ -15,6 +15,7 @@ from hermes_os.control_center_snapshot import ControlCenterSnapshotStore
 from hermes_os.minimal_cli_spec import DEFAULT_CLI_SPEC
 from hermes_os.operational_memory_log import OperationalMemoryLog
 from hermes_os.process_adapter import ProcessAdapter
+from hermes_os.watchdog import WatchdogScheduler, WatchdogStorage
 from hermes_os.workforce_queue import WorkforceQueue
 
 
@@ -26,7 +27,13 @@ def _build_runtime() -> dict:
         "snapshot": ControlCenterSnapshotStore(),
         "actions": ActionRecords(),
         "artifacts": ArtifactRegistry(),
+        "watchdog_storage": WatchdogStorage(),
+        "watchdog_scheduler": WatchdogScheduler(WatchdogStorage()),
     }
+
+
+def _cos_next_tasks_path() -> Path:
+    return Path(__file__).resolve().parents[3] / ".hermes" / "cos" / "next_tasks.yaml"
 
 
 def cmd_status(_args: argparse.Namespace, rt: dict) -> int:
@@ -161,6 +168,82 @@ def cmd_memory(args: argparse.Namespace, rt: dict) -> int:
     return 0
 
 
+def cmd_watchdog(args: argparse.Namespace, rt: dict) -> int:
+    sub = getattr(args, "sub", None)
+    scheduler: WatchdogScheduler = rt["watchdog_scheduler"]
+    storage: WatchdogStorage = rt["watchdog_storage"]
+
+    if sub == "status":
+        print(f"running={scheduler.running}")
+        print(f"interval_seconds={scheduler.interval_seconds}")
+        return 0
+
+    if sub == "scan":
+        count = scheduler.run_once()
+        print(f"stagnant_tasks={count}")
+        return 0
+
+    if sub == "history":
+        records = storage.list_audit_for_task(args.task_id, limit=getattr(args, "limit", 20))
+        for record in records:
+            print(record)
+        return 0
+
+    if sub == "recent":
+        records = storage.list_recent_audit(limit=getattr(args, "limit", 20))
+        for record in records:
+            print(record)
+        return 0
+
+    print("watchdog subcommands: status|scan|history|recent")
+    return 0
+
+
+def cmd_loop(args: argparse.Namespace, rt: dict) -> int:
+    from hermes_os.continuous_loop import ContinuousDevelopmentLoop
+
+    loop = rt.get("loop")
+    if loop is None:
+        loop = ContinuousDevelopmentLoop(adapter=rt["adapter"])
+        rt["loop"] = loop
+
+    sub = getattr(args, "sub", None)
+
+    if sub == "start":
+        result = loop.start()
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if sub == "stop":
+        result = loop.stop()
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if sub == "status":
+        result = loop.status()
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if sub == "progress":
+        result = loop.progress()
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if sub == "step":
+        result = loop.step()
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    print("loop subcommands: start|stop|status|progress|step")
+    return 0
+
+
+def cmd_cos_status(_args: argparse.Namespace, _rt: dict) -> int:
+    from hermes_os.cos_runtime import CosRuntime
+    from hermes_os.cos_runtime.schema import SCHEMA_VERSION
+
+    status_payload = CosRuntime().status()
+    schema_version = status_payload.get("schema_version") or SCHEMA_VERSION
+    print(json.dumps({"schema_version": schema_version, "payload": status_payload}, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def cmd_runs(_args: argparse.Namespace, _rt: dict) -> int:
     print("runs:")
     return 0
@@ -172,6 +255,10 @@ def build_parser(spec: "CLISpec") -> argparse.ArgumentParser:  # type: ignore[na
 
     subparsers.add_parser("status", help="Show system snapshot")
     subparsers.add_parser("runs", help="List known runs")
+    subparsers.add_parser("cos-status", help="CoS Runtime status (v1 schema)")
+    switch_p = subparsers.add_parser("switch-project", help="Switch active CoS project")
+    switch_p.add_argument("project_code")
+    switch_p.add_argument("--project-name", default=None)
 
     actions_p = subparsers.add_parser("actions", help="Manage action records")
     acts_sub = actions_p.add_subparsers(dest="sub")
@@ -218,6 +305,24 @@ def build_parser(spec: "CLISpec") -> argparse.ArgumentParser:  # type: ignore[na
     mem_p.add_argument("--until")
     mem_p.add_argument("--contains")
 
+    wd_p = subparsers.add_parser("watchdog", help="Watchdog monitor")
+    wd_sub = wd_p.add_subparsers(dest="sub")
+    wd_sub.add_parser("status", help="Show watchdog status")
+    wd_sub.add_parser("scan", help="Run manual scan")
+    wd_hist = wd_sub.add_parser("history", help="Query task watchdog history")
+    wd_hist.add_argument("task_id")
+    wd_hist.add_argument("--limit", type=int, default=20)
+    wd_recent = wd_sub.add_parser("recent", help="Query recent audit records")
+    wd_recent.add_argument("--limit", type=int, default=20)
+
+    loop_p = subparsers.add_parser("loop", help="Continuous Development Loop")
+    loop_sub = loop_p.add_subparsers(dest="sub")
+    loop_sub.add_parser("start", help="Start automated loop")
+    loop_sub.add_parser("stop", help="Stop loop gracefully")
+    loop_sub.add_parser("status", help="Current loop state")
+    loop_sub.add_parser("progress", help="Chairman progress report")
+    loop_sub.add_parser("step", help="Execute single step manually")
+
     return parser
 
 
@@ -235,6 +340,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "artifacts": cmd_artifacts,
         "queue": cmd_queue,
         "memory": cmd_memory,
+        "watchdog": cmd_watchdog,
+        "loop": cmd_loop,
     }
     handler = dispatch.get(args.command)
     if handler is None:
